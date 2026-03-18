@@ -78,7 +78,7 @@ export const SidePanel = () => {
           // 鼠标移动时调整宽度 / Handle mouse move to resize
           const handleMouseMove = (moveEvent) => {
             const newWidth = Math.max(160, Math.min(600, startWidth + (moveEvent.pageX - startX)));
-            dispatch({ type: 'SET_PANEL_WIDTH', payload: newWidth });
+            dispatch({ type: 'SET_PANEL_WIDTH', panel: 'left', width: newWidth });
           };
 
           // 鼠标抬起时停止调整 / Handle mouse up to stop resizing

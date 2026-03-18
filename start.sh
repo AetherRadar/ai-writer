@@ -50,16 +50,56 @@ WENSHAPE_FRONTEND_PORT="${PORTS#*,}"
 export WENSHAPE_BACKEND_PORT WENSHAPE_FRONTEND_PORT
 
 echo "[1/3] 启动后端服务..."
-osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh\"" 2>/dev/null || \
-gnome-terminal -- bash -c "cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh; exec bash" 2>/dev/null || \
-xterm -e "cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh" 2>/dev/null &
+if osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh\"" 2>/dev/null; then
+    :
+elif gnome-terminal -- bash -c "cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh; exec bash" 2>/dev/null; then
+    :
+elif xterm -e "cd '$SCRIPT_DIR/backend' && PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_AUTO_PORT=1 ./run.sh" 2>/dev/null & then
+    :
+else
+    echo "  [提示] 无法打开独立终端窗口，后端服务将在后台运行，日志输出至 backend/backend.log"
+    cd "$SCRIPT_DIR/backend" && PORT="$WENSHAPE_BACKEND_PORT" WENSHAPE_BACKEND_PORT="$WENSHAPE_BACKEND_PORT" WENSHAPE_AUTO_PORT=1 nohup ./run.sh > backend.log 2>&1 &
+fi
 
 sleep 3
 
 echo "[2/3] 启动前端服务..."
-osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh\"" 2>/dev/null || \
-gnome-terminal -- bash -c "cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh; exec bash" 2>/dev/null || \
-xterm -e "cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh" 2>/dev/null &
+if osascript -e "tell app \"Terminal\" to do script \"cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh\"" 2>/dev/null; then
+    :
+elif gnome-terminal -- bash -c "cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh; exec bash" 2>/dev/null; then
+    :
+elif xterm -e "cd '$SCRIPT_DIR/frontend' && VITE_DEV_PORT='$WENSHAPE_FRONTEND_PORT' WENSHAPE_FRONTEND_PORT='$WENSHAPE_FRONTEND_PORT' VITE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' WENSHAPE_BACKEND_PORT='$WENSHAPE_BACKEND_PORT' VITE_BACKEND_URL='http://localhost:$WENSHAPE_BACKEND_PORT' ./run.sh" 2>/dev/null & then
+    :
+else
+    echo "  [提示] 无法打开独立终端窗口，前端服务将在后台运行，日志输出至 frontend/frontend.log"
+    cd "$SCRIPT_DIR/frontend" && VITE_DEV_PORT="$WENSHAPE_FRONTEND_PORT" WENSHAPE_FRONTEND_PORT="$WENSHAPE_FRONTEND_PORT" VITE_BACKEND_PORT="$WENSHAPE_BACKEND_PORT" WENSHAPE_BACKEND_PORT="$WENSHAPE_BACKEND_PORT" VITE_BACKEND_URL="http://localhost:$WENSHAPE_BACKEND_PORT" nohup ./run.sh > frontend.log 2>&1 &
+fi
+
+wait_for_service() {
+    local name=$1
+    local url=$2
+    local timeout=${3:-180}
+    echo "  正在查验 $name 状态 (最多等待 ${timeout}s)..."
+    local start_time=$(date +%s)
+    while true; do
+        if curl -sSf "$url" > /dev/null 2>&1; then
+            echo "  [OK] $name 已就绪！"
+            return 0
+        fi
+        
+        local current_time=$(date +%s)
+        if (( current_time - start_time > timeout )); then
+            echo "  [超时] $name 无法在 ${timeout} 秒内连接，请检查服务日志。"
+            return 1
+        fi
+        sleep 2
+    done
+}
+
+echo ""
+echo "检查服务健康状态 (由于首次需要安装依赖，可能需要数分钟)..."
+wait_for_service "后端 API" "http://localhost:$WENSHAPE_BACKEND_PORT/health" 300
+wait_for_service "前端页面" "http://localhost:$WENSHAPE_FRONTEND_PORT" 120
 
 echo ""
 echo "[3/3] 服务启动完成！"
@@ -72,6 +112,14 @@ echo " 后端 API:   http://localhost:$WENSHAPE_BACKEND_PORT"
 echo " API 文档:   http://localhost:$WENSHAPE_BACKEND_PORT/docs"
 echo "========================================"
 echo ""
-echo "提示: 前后端服务已在独立终端启动"
-echo "      关闭对应终端即可停止服务"
+echo "提示: 前后端服务已在独立终端或后台启动"
+echo "      请查看对应端目录下的日志 (.log) 获取运行状态"
+echo "      可执行 killall node 和 pkill -f 'app.main' 停止后台服务"
 echo ""
+
+echo "尝试在浏览器中打开前端界面..."
+if command -v open >/dev/null 2>&1; then
+    open "http://localhost:$WENSHAPE_FRONTEND_PORT"
+elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "http://localhost:$WENSHAPE_FRONTEND_PORT"
+fi

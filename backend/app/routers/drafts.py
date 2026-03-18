@@ -124,6 +124,38 @@ class UpdateContentRequest(BaseModel):
     title: Optional[str] = None
 
 
+class RewriteTextRequest(BaseModel):
+    text: str
+
+@router.post("/rewrite")
+async def rewrite_text(project_id: str, body: RewriteTextRequest):
+    """
+    De-AI Humanize Rewrite / 极致拟人化重写
+    接收前端选中的一段文字，通过 EditorAgent 将其转化为一逗到底、口语化风格的文本。
+    """
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+        
+    from app.agents.editor import EditorAgent
+    from app.config import config
+    from app.llm_gateway import get_gateway
+    
+    # 临时直接初始化一个 EditorAgent 用于调用 rewrite_text
+    agent = EditorAgent(
+        gateway=get_gateway(),
+        draft_storage=draft_storage,
+        card_storage=None,  # Not needed for simple rewrite
+        canon_storage=None,
+        language=config.get("project", {}).get("language", "zh")
+    )
+    
+    try:
+        rewritten = await agent.rewrite_text(project_id, body.text)
+        return {"success": True, "rewritten": rewritten}
+    except Exception as e:
+        logger.error(f"Rewrite API failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 class ReorderChaptersRequest(BaseModel):
     volume_id: str
     chapter_order: List[str]

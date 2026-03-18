@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useIDE } from '../../context/IDEContext';
 import useSWR, { mutate } from 'swr';
 import { projectsAPI } from '../../api';
-import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil } from 'lucide-react';
+import { Bot, ChevronDown, Folder, Plus, Check, Trash2, Home, Pencil, RotateCcw } from 'lucide-react';
 import { cn } from '../ui/core';
 import logger from '../../utils/logger';
 import { useLocale } from '../../i18n';
@@ -123,7 +123,7 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
           className="flex flex-col leading-none hover:text-[var(--vscode-fg)] transition-colors"
           title={t('titleBar.backToHome')}
         >
-          <span className="brand-logo text-xl text-[var(--vscode-fg)]">文枢</span>
+          <span className="brand-logo text-xl text-[var(--vscode-fg)]">写作agent</span>
         </button>
 
         <div className="relative" ref={menuRef}>
@@ -287,6 +287,17 @@ export function TitleBar({ projectName, chapterTitle, rightActions, aiHint }) {
 
       <div className="flex items-center gap-2">
         {rightActions}
+        <button
+          onClick={() => dispatch({ type: 'RESET_LAYOUT' })}
+          className={cn(
+            'flex items-center gap-2 px-3 py-1.5 rounded-[6px] text-sm transition-colors',
+            'text-[var(--vscode-fg-subtle)] hover:bg-[var(--vscode-list-hover)] hover:text-[var(--vscode-fg)]'
+          )}
+          title={t('titleBar.resetLayout')}
+          aria-label={t('titleBar.resetLayout')}
+        >
+          <RotateCcw size={14} />
+        </button>
         <button
           onClick={() => dispatch({ type: 'TOGGLE_RIGHT_PANEL' })}
           className={cn(

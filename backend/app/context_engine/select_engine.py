@@ -14,6 +14,7 @@ License: PolyForm Noncommercial License 1.0.0
 """
 
 from typing import List, Optional, Dict, Any
+import re
 import math
 from .models import ContextItem, ContextPriority, ContextType
 from .text_tokenizer import calculate_overlap_score, calculate_bm25_score
@@ -94,10 +95,15 @@ class ContextSelectEngine:
             if item_type == "style_card":
                 card = await storage.get_style_card(project_id)
                 if card:
+                    content = self._format_card(card)
+                    if self._looks_like_rewrite_prompt(content):
+                        # 防止把“去 AI 重写提示词”当作风格卡注入正文，导致强烈 AI 味/长句/总结腔等副作用。
+                        logger.warning("Style card looks like a rewrite prompt; skipping injection for safety.")
+                        return None
                     return ContextItem(
                         id="style_card",
                         type=ContextType.STYLE_CARD,
-                        content=self._format_card(card),
+                        content=content,
                         priority=ContextPriority.CRITICAL,
                     )
         except Exception as exc:
@@ -124,6 +130,40 @@ class ContextSelectEngine:
         if isinstance(card, dict):
             return "\n".join(f"{k}: {v}" for k, v in card.items() if v)
         return str(card)
+
+    def _looks_like_rewrite_prompt(self, text: str) -> bool:
+        """
+        Heuristic guard: some users accidentally paste a de-AI rewrite prompt into `cards/style.yaml`.
+        That content is toxic for drafting (it forces long sentences, meta instructions, and detector talk).
+
+        We keep this narrow to avoid false positives for legitimate "avoid AI taste" style notes.
+        """
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+
+        # Normalize for easier matching across whitespace / punctuation variants.
+        compact = re.sub(r"\s+", "", raw).lower()
+
+        # Strong markers of a rewrite/humanize prompt (not a prose style handbook).
+        strong_markers = [
+            "chaoticspokenflow",
+            "一逗到底",
+            "极致拟人化",
+            "混沌增益",
+            "strictprohibitions",
+            "executionsteps",
+        ]
+        if any(m.lower() in compact for m in strong_markers if m):
+            return True
+
+        # AI detector evasion phrasing: keep it specific ("AI 检测") not generic "AI 味".
+        if "ai检测" in compact or "ai检测工具" in compact:
+            return True
+        if "规避" in raw and ("检测" in raw or "ai检测" in compact):
+            return True
+
+        return False
 
     # ========================================================================
     # 检索式选择：基于查询的相关性排序 / Retrieval Selection: Query-based ranking

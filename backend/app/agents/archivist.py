@@ -25,6 +25,7 @@ from app.prompts import (
     archivist_style_profile_prompt,
 )
 from app.config import config
+from app.dependencies import get_outline_storage
 from app.utils.chapter_id import ChapterIDValidator, normalize_chapter_id
 from app.utils.dynamic_ranges import get_chapter_window, get_previous_chapters_limit
 from app.utils.logger import get_logger
@@ -373,10 +374,16 @@ class ArchivistAgent(FanfictionMixin, SummaryMixin, BaseAgent):
         summaries: List[str],
         fallback_events: List[Any],
     ) -> Dict[str, str]:
+
+
+
         before = summaries[-1] if summaries else ""
         if not before and fallback_events:
             event = fallback_events[-1]
             before = f"{event.time}: {event.event} @ {event.location}"
+        
+
+        
         return {
             "before": before,
             "current": chapter_goal,
@@ -831,3 +838,259 @@ class ArchivistAgent(FanfictionMixin, SummaryMixin, BaseAgent):
         )
         response = await self.call_llm(messages)
         return str(response or "").strip()
+
+    # ------------------------------------------------------------------
+    # AI 卡片生成 / AI Card Generation
+    # ------------------------------------------------------------------
+
+    async def generate_card_description(
+        self,
+        name: str,
+        card_type: str,
+        style_hint: str = "",
+        note: str = "",
+        existing_characters: Optional[List[str]] = None,
+    ) -> str:
+        """根据名字和约束，AI 生成单张卡片的描述。
+
+        Generate a description for a single card (character or world)
+        based on name, card type, style hint, and optional note.
+
+        Args:
+            name: 卡片名字 / Card name.
+            card_type: "character" 或 "world" / Card type.
+            style_hint: 文风提示 / Writing style hint.
+            note: 补充说明 / Supplementary note.
+            existing_characters: 已有角色名列表，用于约束 AI 不重复 / Existing character names.
+
+        Returns:
+            生成的描述文本 / Generated description text.
+        """
+        lang = self.language or "zh"
+        type_label = "人物角色" if card_type == "character" else "世界观设定"
+        existing_block = ""
+        if existing_characters:
+            existing_block = "\n\n已有角色（不得与下列名字的设定相矛盾）：\n" + "、".join(existing_characters[:30])
+
+        style_block = f"\n\n文风要求：{style_hint}" if style_hint else ""
+        note_block = f"\n\n补充说明：{note}" if note else ""
+
+        if lang == "en":
+            system = (
+                "You are a creative writing assistant. Generate a concise, vivid description "
+                "for a novel card entry. Output ONLY the description text, no labels or formatting."
+            )
+            user = (
+                f"Generate a description for a {type_label} card named \"{name}\"."
+                f"{style_block}{note_block}{existing_block}\n\n"
+                "Requirements:\n"
+                "- 80-300 words\n"
+                "- Describe personality, background, appearance (for character) or "
+                "rules, atmosphere, significance (for world)\n"
+                "- Stay consistent with any existing characters listed above\n"
+                "- Output description text only"
+            )
+        else:
+            system = (
+                "你是一位专业的小说创作助手。请为卡片库生成简洁、生动的描述。"
+                "只输出描述正文，不要标题、标签或格式符号。"
+            )
+            user = (
+                f"请为「{name}」生成一段{type_label}卡片描述。"
+                f"{style_block}{note_block}{existing_block}\n\n"
+                "要求：\n"
+                "- 150-400字\n"
+                "- 角色卡：涵盖性格、背景、外貌特征；世界观卡：涵盖概念定义、规则、氛围意义\n"
+                "- 不得与上方已有角色的设定相矛盾\n"
+                "- 只输出描述正文"
+            )
+
+        messages = self.build_messages(
+            system_prompt=system,
+            user_prompt=user,
+            context_items=None,
+        )
+        response = await self.call_llm(messages)
+        return str(response or "").strip()
+
+    async def generate_chapter_outline(self, project_id: str, chapter_id: str, instruction: str) -> str:
+        """
+        根据创作指令和现有大纲/摘要推导本章结构大纲
+        """
+        outline_storage = get_outline_storage()
+        
+        master = await outline_storage.get_master_outline(project_id)
+        master_content = master.get("content", "") if master else ""
+        
+        volume_id = ChapterIDValidator.extract_volume_id(chapter_id) or "V1"
+        volume = await outline_storage.get_volume_outline(project_id, volume_id)
+        volume_content = volume.get("content", "") if volume else ""
+        
+        chapters = await self._get_previous_chapters(project_id, chapter_id, limit=3)
+        recent_summaries = await self._build_summary_blocks(project_id, chapters)
+
+        sections = []
+        if master_content:
+            sections.append(f"[总纲 / Master Outline]\n{master_content}")
+        if volume_content:
+            sections.append(f"[{volume_id} 分卷纲 / Volume Outline]\n{volume_content}")
+        if recent_summaries:
+            sections.append("[前情提要 / Recent Events]\n" + "\n".join(recent_summaries))
+
+        sections.append(f"[本章创作目标 / Chapter Goal for '{chapter_id}']\n{instruction}")
+
+        body = "\n\n".join(sections)
+        
+        if self.language == "en":
+            system = "You are a professional novel structural outliner. Follow user instructions to generate a chapter outline based on context."
+            user = f"{body}\n\nPlease generate a detailed structural outline for this chapter based on the context and chapter goal above. Output points or steps on how the plot will progress in this chapter. Focus on story progression. Do not output actual novel text, just the structure."
+        else:
+            system = "你是一位专业的小说结构大纲师，请根据用户的给定上下文和创作目标，构思精炼的章节大纲。"
+            user = f"{body}\n\n请根据以上上下文和本章创作目标，构思并输出一份此章节的详细结构大纲。你需要以步骤或要点的形式说明本章剧情将如何推进，以及核心事件的内容。请只输出大纲结构内容，尽量简明扼要，不要输出具体的正文文字内容。"
+
+        messages = self.build_messages(
+            system_prompt=system,
+            user_prompt=user,
+            context_items=None,
+        )
+        response = await self.call_llm(messages)
+        return str(response or "").strip()
+
+    async def extract_cards_from_outline(
+        self,
+        outline_text: str,
+        max_cards: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """从大纲文本中提取角色卡和世界观卡列表。
+
+        Extract character and world cards from outline text.
+        Results are deduplicated by name and filtered for quality.
+
+        Args:
+            outline_text: 大纲文本（可包含总纲、分卷纲、章节细纲） / Outline text.
+            max_cards: 最大返回卡片数（默认20）/ Maximum cards to return.
+
+        Returns:
+            卡片字典列表，每项含 card_type/name/description/aliases/category/rules/stars
+        """
+        import json as _json
+
+        lang = self.language or "zh"
+
+        if lang == "en":
+            system = (
+                "You are a fiction editor. Extract all notable characters and world-building elements "
+                "from the provided outline. Output a JSON array only, no markdown fences.\n\n"
+                "Each item must follow this schema exactly:\n"
+                '{"card_type": "character"|"world", "name": "...", "description": "...", '
+                '"aliases": [], "category": "", "rules": [], "stars": 1|2|3}\n\n'
+                "Rules:\n"
+                "- card_type: character for persons, world for places/factions/concepts/items\n"
+                "- description: 50-300 words, meaningful content only\n"
+                "- stars: 3=protagonist/core setting, 2=supporting, 1=minor\n"
+                "- aliases: alternative names for the same entity\n"
+                "- category: for world cards only (e.g. location, faction, concept, item)\n"
+                "- rules: for world cards only, list of rules/constraints\n"
+                "- Deduplicate by name\n"
+                f"- Return at most {max_cards} items\n"
+                "- Output valid JSON array only"
+            )
+            user = f"Outline:\n\n{outline_text[:8000]}"
+        else:
+            system = (
+                "你是一位专业的小说编辑。从下方大纲中提取所有值得建档的角色和世界观元素，"
+                "输出 JSON 数组，不要 markdown 代码块。\n\n"
+                "每项严格遵守以下结构：\n"
+                '{"card_type": "character"|"world", "name": "...", "description": "...", '
+                '"aliases": [], "category": "", "rules": [], "stars": 1|2|3}\n\n'
+                "规则：\n"
+                "- card_type：人物用 character，地点/势力/概念/物品用 world\n"
+                "- description：50-300字，有实质内容\n"
+                "- stars：3=主角/核心设定，2=重要配角/重要设定，1=次要角色/背景设定\n"
+                "- aliases：该实体的别名列表（可为空数组）\n"
+                "- category：仅世界观卡填写（如：地点、势力、功法、物品、概念）\n"
+                "- rules：仅世界观卡填写，该设定的规则约束列表（可为空数组）\n"
+                "- 按名字去重\n"
+                f"- 最多返回 {max_cards} 项\n"
+                "- 只输出合法 JSON 数组"
+            )
+            user = f"大纲内容：\n\n{outline_text[:8000]}"
+
+        messages = self.build_messages(
+            system_prompt=system,
+            user_prompt=user,
+            context_items=None,
+        )
+        response = await self.call_llm(messages)
+        raw = str(response or "").strip()
+
+        # 解析 JSON
+        try:
+            # 去掉可能残留的 markdown 代码块
+            if raw.startswith("```"):
+                raw = re.sub(r"^```[a-z]*\n?", "", raw)
+                raw = re.sub(r"\n?```$", "", raw).strip()
+            cards = _json.loads(raw)
+            if not isinstance(cards, list):
+                cards = []
+        except Exception:
+            logger.warning("extract_cards_from_outline: JSON parse failed, raw=%s", raw[:200])
+            cards = []
+
+        # 过滤和后处理
+        seen_names: set = set()
+        result = []
+        for item in cards:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            description = str(item.get("description") or "").strip()
+            card_type = str(item.get("card_type") or "character")
+            if card_type not in ("character", "world"):
+                card_type = "character"
+
+            # 跳过无效项
+            if not name:
+                continue
+            # 质量过滤：描述长度不足
+            if len(description) < 15:
+                continue
+            # 去重（按名字，大小写不敏感）
+            name_key = name.lower()
+            if name_key in seen_names:
+                continue
+            seen_names.add(name_key)
+
+            # 星级约束
+            stars = item.get("stars")
+            try:
+                stars = int(stars)
+                if stars not in (1, 2, 3):
+                    stars = 1
+            except (TypeError, ValueError):
+                stars = 1
+
+            aliases = item.get("aliases") or []
+            if not isinstance(aliases, list):
+                aliases = []
+            aliases = [str(a).strip() for a in aliases if str(a).strip()]
+
+            entry: Dict[str, Any] = {
+                "card_type": card_type,
+                "name": name,
+                "description": description,
+                "aliases": aliases,
+                "stars": stars,
+            }
+            if card_type == "world":
+                entry["category"] = str(item.get("category") or "").strip()
+                rules = item.get("rules") or []
+                if not isinstance(rules, list):
+                    rules = []
+                entry["rules"] = [str(r).strip() for r in rules if str(r).strip()]
+
+            result.append(entry)
+            if len(result) >= max_cards:
+                break
+
+        return result

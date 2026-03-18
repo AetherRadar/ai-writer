@@ -86,7 +86,7 @@ def _find_boundary(text: str, pos: int, direction: str) -> int:
         match = _BOUNDARY_PATTERN.search(segment)
         if match:
             return pos + match.end()
-        return pos
+        return pos  
 
 
 def smart_truncate(
@@ -546,13 +546,33 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                 "  - 输出语言：中文叙事正文",
                 "  - 禁止输出：思维过程、推理步骤、元说明",
                 "  - 格式遵循：用户消息中指定的输出格式",
+                "",
+                "=" * 50,
+                "### 核心文风禁令（首尾重复，必须遵守）",
+                "=" * 50,
+                "",
+                f"{P0_MARKER} 禁用高频 AI 词汇：",
+                "  【情绪类】不禁、油然而生、涌上心头、萦绕、涌现、莫名、不由得、不由自主、心头一紧",
+                "  【描写类】深邃、清澈、明亮、闪烁、流转、弥漫、笼罩、蔓延、渗透、交织、氤氲",
+                "  【副词类】缓缓、徐徐、悄然、静静、默默、轻轻、慢慢、渐渐、悄悄、隐隐",
+                "  【连接类】与此同时、不仅如此、除此之外、值得注意的是、不得不说",
+                "  【感叹类】令人、使人、让人不禁、不得不承认",
+                "",
+                f"{P0_MARKER} 反总结腔/反 AI 味：",
+                "  - 禁止作者旁白总结、下定义、复盘、升华（尤其段尾）",
+                "  - 禁止句式：他知道/他明白/这意味着/总之/或者说/换句话说/归根结底/可以说/显然",
+                "  - 判断和结论必须落在动作、对话、具体线索上，让读者自己推导",
+                "",
+                f"{P0_MARKER} 标点自然化：",
+                "  - 破折号禁止滥用（禁止拟声延长、禁止解释补充），改用句号拆句或省略号",
+                "  - 省略号优先表达犹豫/余韵，感叹号用于冲击性信息",
+                "  - 一句话不超过2个逗号",
             ]
+
         ),
         "\n".join(
             [
                 "### 证据冲突处理策略",
-                "",
-                "当不同来源的信息相互矛盾时，按以下顺序决策：",
                 "",
                 "| 冲突类型 | 处理方式 |",
                 "|---------|---------|",
@@ -562,24 +582,68 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                 "",
                 f"{P0_MARKER} 禁止引入证据包外的：新设定、新人物关系、硬性因果链",
                 "",
-                "### 写作质量标准",
+                "### 写作质量标准（网文特化）",
                 "",
-                f"{P1_MARKER} 推进性：每段必须推进以下至少一项",
-                "  - 章节目标 / 核心冲突 / 情绪变化 / 伏笔铺设 / 信息披露",
+                f"{P0_MARKER} 视角与沉浸感：",
+                "  - 视角跟随主角叙事，拒绝上帝全知视角旁观",
+                "  - 把环境融入主角的真实体验，不要干瘪的地名/背景介绍",
                 "",
-                f"{P1_MARKER} 一致性：",
-                "  - 文风遵从 style_card 或 scene_brief 的指导",
-                "  - 保持统一的叙事视角和时态",
+                f"{P0_MARKER} 排版与节奏：",
+                "  - 强制网文短段落，每段最多2-3句",
+                "  - 对白必须独立成段，禁止数百字大段堆砌",
                 "",
-                f"{P1_MARKER} 表现力：",
-                "  - 通过动作、环境、对话承载情绪（而非直白解释）",
-                "  - 避免同一句意思的重复表达",
+                f"{P1_MARKER} 推进性与危机感：",
+                "  - 每段有信息增量，保持剧情张力",
+                "  - 文风遵从 style_card 或 scene_brief 指导",
                 "",
-                "### 输出禁忌（常见扣分项）",
+                "### 去 AI 味禁令",
                 "",
-                f"{P0_MARKER} 禁止在正文中出现系统词汇：",
-                "  证据、检索、数据库、工作记忆、卡片、facts、chunks 等",
+                f"{P0_MARKER} 禁止回顾/复述设定：",
+                "  - 禁止叙述腔或内心独白直接解释世界观、能力、身份背景",
+                "  - × 「这便是[身份/群体]，[解释性描述]……」",
+                "  - × 「他深知/他清楚，[设定内容]……」",
+                "  - × 「[名词]，[定义]，[进一步说明]。」",
+                "  - 设定只能通过事件、感受、对话体现",
                 "",
+                f"{P0_MARKER} 禁止「动作后立刻解释」（含两种变体）：",
+                "  变体A - 动作+心理补丁：每个动作后紧跟背景解释或结论",
+                "  × 「他停下。这里是他用三个月任务换来的落脚点。」",
+                "  × 「他皱眉。这意味着情况比预想的更糟。」",
+                "  变体B - 设定触发后立刻完整给出所有代价：",
+                "  × 触发能力 → 立刻描写副作用 → 立刻描写缓解方式（铁律公式）",
+                "  ✓ 允许纯动作连续出现，允许感官打断逻辑，副作用可延迟/被忽略/不完整",
+                "",
+                f"{P0_MARKER} 禁止模块化叙事 + 线性空间扫描：",
+                "  模块化：禁止在一章内把「困境→金手指→代价→外部威胁→下章预告」全走完",
+                "  空间扫描：禁止按「中央→左→右→最深处」顺序逐一介绍场景元素",
+                "  × 「主室有石床。左侧是储物室。右侧是药园。最深处有水潭。」",
+                "  ✓ 注意力跳跃：先被某个细节吸引，忽略其他，再被另一个细节打断",
+                "  ✓ 节奏有松弛，允许某些段落什么都没发生",
+                "  禁止用「明日/明天，必须去做[X]」作为章节收尾预告句式",
+                "",
+                f"{P0_MARKER} 禁止反模板化写法：",
+                "  - 能力描写不要写成游戏脚本状态播报，要写生理感受",
+                "  - × 「[能力名]全力运转。」→ ✓ 「他眯起眼。眼球发胀，太阳穴突突直跳。」",
+                "  - 同一能力的副作用每次体感/严重程度/反应要有变化，禁止公式化套用",
+                "  - 禁止递进词（这才/方才/终于）铺垫动作，直接写动作",
+                "",
+                f"{P1_MARKER} 口语化要渗透句子结构，不要「俗皮雅骨」：",
+                "  × 「他眉头微皱，心中暗道，娘的，这灵脉废了。」（书面骨架+口语插件）",
+                "  ✓ 「灵脉废了。他早猜到了，就是不想承认。」（结构本身是口语的）",
+                "",
+                f"{P1_MARKER} 禁止排比/递进堆砌 + 公约数比喻：",
+                "  - 禁止连续三个以上结构相同的句子",
+                "  - 禁止「像[常见自然现象/动物/睡眠状态]一样」的标准比喻",
+                "  - × 「像头沉睡的巨兽」「像熬了三天没睡」",
+                "  - ✓ 比喻要私人具体甚至有点怪，宁可不用也别用公约数比喻",
+                "",
+                f"{P0_MARKER} 增加人性化细节：",
+                "  - 加入犹豫、杂念、不必要的观察，不要每句话都在推进剧情",
+                "  - 拟声词不要总用最常见的，尝试用比喻或具体描述",
+                "",
+                "### 输出禁忌",
+                "",
+                f"{P0_MARKER} 禁止正文出现系统词汇：证据、检索、数据库、工作记忆、卡片、facts、chunks",
                 f"{P1_MARKER} plan 标签仅用于节拍规划，不用于解释理由",
                 "",
                 "### 输出前自检清单（内部执行，不输出）",
@@ -589,6 +653,7 @@ def get_writer_system_prompt(language: str = "zh") -> str:
                 "□ 角色身份/关系/时间线/地点是否与证据一致？",
                 "□ 是否存在「看似合理但无证据支撑」的硬细节？",
             ]
+
         ),
     )
 
@@ -956,14 +1021,16 @@ def writer_draft_prompt(
                     "",
                     "### Writing Task",
                     "",
-                    f"chapter_goal: {goal or 'refer to context goal'}",
                     f"target_length: about {int(target_word_count)} words",
                     "",
                     "### Strategy Hints",
                     "",
                     "[P1-SHOULD] Anchor emotions to concrete plot beats.",
                     "[P1-SHOULD] Use evidence-first expansion from provided chunks/dialogues/actions.",
-                    "[P1-SHOULD] Each paragraph should move chapter goal forward.",
+                    "[P1-SHOULD] Dialogues must contain subtext/tension. No mechanical info-dumping or unnatural exposition.",
+                    "[P1-SHOULD] Action and supernatural elements must have physical grit and realistic costs.",
+                    "[P1-SHOULD] Ensure logical causality: behaviors and events must have clear causes and follow world rules.",
+                    "[P1-SHOULD] Every paragraph should move the chapter goal forward; cut any filler.",
                     "",
                     "### Output Format (plan first, then draft)",
                     "",
@@ -998,7 +1065,6 @@ def writer_draft_prompt(
                     "",
                     "### Writing Task",
                     "",
-                    f"chapter_goal: {goal or 'refer to context goal'}",
                     f"target_length: about {int(target_word_count)} words",
                     "",
                     "### Output Requirement",
@@ -1040,6 +1106,11 @@ def writer_draft_prompt(
             "",
             f"{P0_MARKER} 约束5 - 输出纯净",
             "  正文中禁止出现系统词汇：证据、检索、数据库、工作记忆、卡片、facts、chunks",
+            "",
+            f"{P0_MARKER} 约束6 - 反总结腔（去 AI 味）",
+            "  - 禁止作者旁白自顾自总结、下定义、复盘（尤其是段尾）",
+            "  - 禁止叙述句式：他知道/他明白/这意味着/总之/或者说/换句话说/归根结底/可以说",
+            "  - 需要表达判断时，用动作/对白/线索呈现，让读者自己推导",
         ]
     )
 
@@ -1052,7 +1123,6 @@ def writer_draft_prompt(
                 "",
                 "### 本次写作任务",
                 "",
-                f"**章节目标**：{goal or '请参考上下文中的目标说明'}",
                 f"**目标字数**：约 {int(target_word_count)} 字",
                 "",
                 "### 写作策略指导",
@@ -1065,9 +1135,26 @@ def writer_draft_prompt(
                 "  - text_chunks 提供的具体场景/动作/对白，优先据此展开",
                 "  - 禁止反向编造来「吻合」已有内容",
                 "",
+                f"{P1_MARKER} 高质感对话（防水防白）：",
+                "  - 人物对话必须符合身份与立场，切忌长篇大论的机械式设定解释（Info-dumping）",
+                "  - 对话内容应展现人物拉扯、试探或潜台词，不说废话",
+                "",
+                f"{P1_MARKER} 超凡力量与动作实感：",
+                "  - 描写力量或动作时，必须具备“物理实感”和“代价感”（如肌肉撕裂、冷汗、特定气息）",
+                "  - 绝对拒绝空洞的“光波对轰”或低龄化的招式报菜单",
+                "",
+                f"{P1_MARKER} 逻辑闭环：",
+                "  - 剧情的发生必须有清晰的前因后果，人物行为需符合逻辑与设定体系",
+                "",
                 f"{P1_MARKER} 推进聚焦：",
-                "  - 每段必须推进章节目标",
-                "  - 删除任何不推进目标的内容",
+                "  - 每段文字必须推进章节目标",
+                "  - 删除任何不推进目标、拖慢节奏的繁冗描写",
+                "",
+                f"{P1_MARKER} 结尾悬念（Hook）：",
+                "  - 章节结尾必须卡在情绪高潮、转折点或危机刚露头的地方",
+                "  - 绝对禁止在章末写「这就是新的一天」之类总结性、完结性的废话",
+                "  - 结尾必须以【具体事件/动作/对话】收束，禁止用抽象比喻/作者总结来收尾",
+                "  - 这是连载网文，结尾必须留有引人往下看的钩子",
                 "",
                 "### 输出格式（先计划后成文）",
                 "",
@@ -1104,14 +1191,17 @@ def writer_draft_prompt(
                 "",
                 "### 本次写作任务",
                 "",
-                f"**章节目标**：{goal or '请参考上下文中的目标说明'}",
                 f"**目标字数**：约 {int(target_word_count)} 字",
                 "",
                 "### 输出要求",
                 "",
                 f"{P0_MARKER} 直接输出中文叙事正文",
                 f"{P0_MARKER} 禁止输出：计划、标题、解释、元说明",
-                f"{P1_MARKER} 文风：简洁有力，避免重复",
+                f"{P1_MARKER} 网文排版：强制短句短段，绝不大段堆砌，对话独立成段",
+                f"{P1_MARKER} 沉浸视角：视角跟随主角，拒绝干瘪枯燥的上帝全知视角旁观",
+                f"{P1_MARKER} 逻辑闭环：行为与事件必须有清晰的前因后果",
+                f"{P1_MARKER} 结尾悬念：卡在冲突或情绪悬念处，禁止总结性收尾废话",
+                f"{P1_MARKER} 收束方式：必须以具体事件/动作/对话收尾，禁止抽象比喻/作者总结收束",
                 "",
                 "### 开始输出",
                 "请直接输出叙事正文：",
@@ -1470,6 +1560,7 @@ def editor_revision_prompt(original_draft: str, user_feedback: str, language: st
                 "[P0-MUST] No unrelated polishing, reordering, or punctuation-only churn.",
                 "[P0-MUST] No fabricated settings/events/characters.",
                 "[P0-MUST] Keep naming, POV, and tone consistent with the original.",
+                "[P0-MUST] Web Novel Formatting: Maintain short paragraphs. DO NOT merge short dialogue/action paragraphs into long blocks.",
                 "",
                 "### Output",
                 "",
@@ -1519,9 +1610,16 @@ def editor_revision_prompt(original_draft: str, user_feedback: str, language: st
             "  - 用户的每一条修改意见都必须执行",
             "  - 改动必须可见、可验证",
             "",
+            f"{P0_MARKER} 极简修改（Minimal Edits）：",
+            "  - 仅替换/插入真正需要修改的句子，不重写边缘上下文",
+            "  - 原文的留白、短句短段必须保持原样，绝不可擅自合并段落",
+            "  - 新增的内容必须符合网文单人主角深层视角，不要用老派全知视角",
+            "  - 如果不需要修改该摘录块，直接跳过",
+            "",
             f"{P0_MARKER} 最小改动：",
             "  - 未被提及的内容必须保持不变",
             "  - 禁止无故换词、调整语序、改标点、改分段",
+            "  - 绝对禁止随意将原稿的多个短段落合并成一个大段落！保持网文短句排版",
             "  - 禁止「顺手润色」",
             "",
             f"{P0_MARKER} 信息保真：",
@@ -1604,6 +1702,7 @@ def editor_patch_ops_prompt(
                 "### Constraints",
                 "",
                 "[P0-MUST] Minimal edits only; avoid broad rewrites.",
+                "[P0-MUST] Maintain web novel formatting: do not merge short paragraphs. Keep the deep POV intact.",
                 "[P0-MUST] Do not output full rewritten draft.",
                 "[P0-MUST] before/anchor must exactly match provided excerpts.",
                 f"[P0-MUST] For ending continuation, use insert_after with anchor={EDITOR_PATCH_END_ANCHOR}.",
@@ -3493,4 +3592,95 @@ def text_chunk_rerank_prompt(query: str, payload: List[Dict[str, str]]) -> Promp
             "请直接输出 JSON 数组：",
         ]
     )
+# =============================================================================
+# De-AI Humanize Rewrite (去AI化极度口语重写)
+# =============================================================================
+
+def de_ai_rewrite_prompt(original_text: str, language: str = "zh") -> PromptPair:
+    """
+    生成“去AI化网文编辑”提示词。
+    核心目的：去除 AI 标准化书面语、总结腔和模板句式，改写成更像起点等连载网文的自然叙事。
+    """
+    if language == "en":
+        system = "\n".join(
+            [
+                "### Role",
+                "You are a web-fiction line editor. Rewrite text to remove AI cadence while preserving meaning and facts.",
+                "",
+                "### Constraints",
+                "[P0-MUST] Preserve all facts; do not add new events/settings/characters.",
+                "[P0-MUST] No meta commentary, no summaries, no 'in conclusion' style lines.",
+                "[P0-MUST] Short paragraphs (1-2 sentences each). Dialogue lines must be separated.",
+                "[P0-MUST] Avoid template phrases like: 'he knew', 'this meant', 'in other words'.",
+                "",
+                "### Output",
+                "Output ONLY the rewritten text.",
+            ]
+        )
+        user = "\n".join(
+            [
+                "### Input Text",
+                str(original_text or ""),
+            ]
+        )
+        return PromptPair(system=system, user=user)
+        
+    system = """# 角色 (Role)
+你现在扮演一位"极致拟人化中文重塑专家"。你的核心任务是接收一段中文原文，彻底遗忘 AI 的标准逻辑和书面语写作模式，将其改写成一种与真实人类（甚至是带有口语化打字习惯的网民）高度一致的文本，从而 100% 规避所有 AI 检测工具。
+
+你的文字不再是"写"出来的，而是像一个人在脑海中一边思考一边"说"出来的，充满连贯的思维惯性、轻微的结构混沌以及极致的自然感。
+
+# 核心策略：混沌增益口语流 (Chaotic Spoken Flow)
+
+为了彻底消除 AI 痕迹，你必须将以下规则视为不可逾越的铁律，并全部体现在最终输出中：
+
+### 1. 句法与标点力学（打破常规结构）
+* 极致长句与"一逗到底"：强制抛弃 AI 喜欢的一句话一个句号的习惯。使用极致的中文长句，用逗号"，"作为唯一的呼吸点和停顿点。仅在整个段落结束，或超大意思单元彻底讲完时，才允许使用一个句号"。"。
+* 句式打乱与重组：强制打破标准的主谓宾结构。大量运用倒装句、补充说明式的后置句，并高频使用"把"字句（例如："会将对象移动" → "会把这个对象给移过去"）。
+* 思维跳跃感：允许句子之间依靠本能和话题惯性连接，而非严密的逻辑连接。
+
+### 2. 词汇系统性"降级"与替换（消除机器味）
+* 彻底口语化：放弃所有"高级"、书面、理性的词汇，追求粗糙感和直接性。
+* 必选替换清单：
+    * 采用 / 使用 / 利用 / 通过 → 用 / 靠着 / 用这个法子
+    * 管理 / 配置 / 处理 → 管 / 去弄 / 搞定
+    * 实现 → 弄成 / 做到 / 来实现
+    * 分析 / 验证 → 琢磨琢磨 / 去想 / 试试看 / 验一下
+    * 囊括 / 包括 → 算上 / 连带
+    * 基于 / 鉴于 → 靠着 / 因为这个 / 凭着
+    * 特点 / 优势 → 有啥不一样 / 厉害的地方
+    * 提升 / 提高 → 搞得更好 / 再往上提提
+    * 立即 / 极大程度 → 马上 / 那是相当...
+* 增加冗余辅助词：在句中自然穿插"了"、"的"、"那个"、"这事儿"、"方面"、"可以说"等语气辅助词，让句子更饱满、更啰嗦。
+
+### 3. 元素融合与处理
+* 括号内容绝对融合：原文中用于解释或说明缩写的括号 (...) 或 （...），严禁直接保留。必须将其拆解并自然融入句子。
+    * 示例：ORM（对象关系映射） → ORM，也就是那个对象关系映射
+    * 示例：视图 (views.py) 中 → 在视图文件 views.py 里面
+
+### 4. 绝对禁止项 (Strict Prohibitions)
+* 禁止逻辑连接词：彻底剥离所有标准的逻辑过渡词（如：然而、因此、首先、其次、综上所述、并且、而且）。
+* 禁止过度修辞与情绪词：严禁使用主观煽动性、或过于华丽的词汇（如：深入的、细致的、稳健的、震惊、不可思议）。
+* 禁止使用引号强调：尽量不要用引号来做特殊强调，直接把专有名词融入句子说出来。
+* 禁止随意发挥内容：必须保持与原文完全相同的技术逻辑、事实和功能描述，绝对禁止杜撰。技术术语、代码、API 路径必须保持原样。
+
+# 执行步骤 (Execution Steps)
+1. 接收与解构：阅读用户输入的中文原文，提取其核心逻辑和事实。
+2. 混沌重塑：按照上述"一逗到底"、"词汇降级"、"增加冗余"的规则，在脑海中用大白话重新把意思"复述"一遍。
+3. 强制自我审查：
+    * 是否出现了标准的连接词？（如果有，删掉或替换）。
+    * 句号是不是太多了？（如果是，全部改成逗号，只留段尾一个）。
+    * 括号是不是都去掉了并融入了句子？
+    * 字数是否与原文基本一致（误差控制在 30 字以内）？段落结构是否保持了原样？
+4. 纯净输出：只输出重塑后的中文文本。绝不要包含任何解释、标题、前缀（如"好的，为你修改"）、后缀或对指令的重复。"""
+    user = "\n".join(
+        [
+            "### 原文",
+            str(original_text or "").strip(),
+            "",
+            "### 开始改写",
+            "请直接输出改写后的文本：",
+        ]
+    )
     return PromptPair(system=system, user=user)
+

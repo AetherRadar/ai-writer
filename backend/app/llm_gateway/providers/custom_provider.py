@@ -42,6 +42,23 @@ class CustomProvider(BaseLLMProvider):
             max_tokens=max_tokens or self.max_tokens
         )
         
+        if isinstance(response, str):
+            # 某些模型（如 grok-4.1-thinking）即使非流式调用也返回 SSE 格式文本
+            # 尝试解析 SSE 流 / Some models return SSE even for non-stream requests
+            if "data: " in response:
+                content = _parse_sse_content(response)
+                if content:
+                    return {
+                        "content": content,
+                        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                        "model": self.model,
+                        "finish_reason": "stop",
+                    }
+            raise RuntimeError(f"Custom LLM API returned text instead of JSON: {response}")
+        
+        if not hasattr(response, "choices") or not getattr(response, "choices"):
+            raise RuntimeError(f"Custom LLM API returned invalid JSON object without choices: {response}")
+
         return {
             "content": response.choices[0].message.content,
             "usage": {
@@ -56,3 +73,30 @@ class CustomProvider(BaseLLMProvider):
     def get_provider_name(self) -> str:
         """Get provider name / 获取提供商名称"""
         return "custom"
+
+
+def _parse_sse_content(sse_text: str) -> str:
+    """
+    解析 SSE 流文本，拼接所有 delta.content 字段为完整字符串。
+    Parse SSE stream text and concatenate all delta.content fields.
+    """
+    import json
+    parts = []
+    for line in sse_text.splitlines():
+        line = line.strip()
+        if not line.startswith("data: "):
+            continue
+        payload = line[len("data: "):].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            obj = json.loads(payload)
+            choices = obj.get("choices") or []
+            for choice in choices:
+                delta = choice.get("delta") or {}
+                chunk = delta.get("content") or ""
+                if chunk:
+                    parts.append(chunk)
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return "".join(parts)

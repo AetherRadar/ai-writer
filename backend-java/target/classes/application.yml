@@ -1,0 +1,28 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: wenshape-backend
+
+# 数据目录配置（读取现有 Python 项目的 data 目录）
+# IDEA 工作目录通常是项目根目录，data 在根目录下
+# 如果从 backend-java/ 启动，则需要 ../data
+wenshape:
+  data-dir: data
+  
+# LLM 配置
+llm:
+  default-provider: openai
+  openai:
+    api-key: sk-Z9LHidCU5B96sdoNJk4qdLwkLCMWao2KL6IDgniEhVeb0UCr
+    base-url: https://sunlea.de/v1
+    model: "[NV]minimax-m2.5"
+    temperature: 0.7
+    max-tokens: 8000
+
+# 日志配置
+logging:
+  level:
+    com.wenshape: DEBUG
+    dev.langchain4j: DEBUG

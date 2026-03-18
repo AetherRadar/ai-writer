@@ -112,7 +112,7 @@ class StartSessionRequest(BaseModel):
     language: Optional[str] = Field(None, description="Writing language override: zh/en or locale-like values")
     chapter: str = Field(..., min_length=1, max_length=50, description="Chapter ID")
     chapter_title: str = Field(..., min_length=1, max_length=200, description="Chapter title")
-    chapter_goal: str = Field(..., min_length=1, max_length=2000, description="Chapter goal")
+    chapter_goal: str = Field(..., min_length=1, max_length=20000, description="Chapter goal")
     target_word_count: int = Field(3000, ge=100, le=50000, description="Target word count")
     character_names: Optional[List[str]] = Field(None, description="Character names")
 

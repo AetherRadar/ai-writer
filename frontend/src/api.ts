@@ -107,6 +107,19 @@ export const cardsAPI = {
     data: { content: string; language?: string }
   ): Promise<AxiosResponse<{ style: string }>> =>
     llmApi.post(`${API_BASE}/projects/${projectId}/cards/style/extract`, data),
+
+  // AI 卡片生成 / AI Card Generation
+  generateDescription: (
+    projectId: string,
+    data: { card_type: string; name: string; style_hint?: string; note?: string; language?: string }
+  ): Promise<AxiosResponse<{ description: string }>> =>
+    llmApi.post(`${API_BASE}/projects/${projectId}/cards/generate`, data),
+
+  extractFromOutline: (
+    projectId: string,
+    data: { outline_text: string; language?: string }
+  ): Promise<AxiosResponse<{ cards: any[] }>> =>
+    llmApi.post(`${API_BASE}/projects/${projectId}/cards/extract-from-outline`, data),
 };
 
 // ============================================================================
@@ -165,10 +178,12 @@ export const draftsAPI = {
     api.get(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`),
   saveSummary: (projectId: string, chapter: string, data: Partial<ChapterSummary>): Promise<AxiosResponse> =>
     api.post(`${API_BASE}/projects/${projectId}/drafts/${chapter}/summary`, data),
-  deleteChapter: (projectId: string, chapter: string): Promise<AxiosResponse> =>
-    api.delete(`${API_BASE}/projects/${projectId}/drafts/${chapter}`),
-  reorderChapters: (projectId: string, data: { chapters: string[] }): Promise<AxiosResponse> =>
-    api.post(`${API_BASE}/projects/${projectId}/drafts/reorder`, data),
+  deleteChapter: (projectId: string, chapterId: string): Promise<AxiosResponse> =>
+    api.delete(`${API_BASE}/projects/${projectId}/drafts/${chapterId}`),
+  reorderChapters: (projectId: string, volumeId: string, chapterOrder: string[]): Promise<AxiosResponse> =>
+    api.post(`${API_BASE}/projects/${projectId}/drafts/reorder`, { volume_id: volumeId, chapter_order: chapterOrder }),
+  rewriteText: (projectId: string, text: string): Promise<AxiosResponse<{ success: boolean; rewritten: string }>> =>
+    api.post(`${API_BASE}/projects/${projectId}/drafts/rewrite`, { text }, { timeout: 120000 }),
   updateContent: (projectId: string, chapter: string, data: { content: string }): Promise<AxiosResponse> =>
     api.put(`${API_BASE}/projects/${projectId}/drafts/${chapter}/content`, data),
   autosaveContent: (projectId: string, chapter: string, data: { content: string }): Promise<AxiosResponse> =>
@@ -191,6 +206,22 @@ export const volumesAPI = {
     api.get(`${API_BASE}/projects/${projectId}/volumes/${volumeId}/summary`),
   saveSummary: (projectId: string, volumeId: string, data: Record<string, unknown>): Promise<AxiosResponse> =>
     api.put(`${API_BASE}/projects/${projectId}/volumes/${volumeId}/summary`, data),
+};
+
+// ============================================================================
+// 大纲 API / Outline API
+// ============================================================================
+export const outlineAPI = {
+  get: (projectId: string): Promise<AxiosResponse> =>
+    api.get(`${API_BASE}/projects/${projectId}/outline`),
+  saveMaster: (projectId: string, data: { content: string }): Promise<AxiosResponse> =>
+    api.put(`${API_BASE}/projects/${projectId}/outline/master`, data),
+  saveVolume: (projectId: string, volumeId: string, data: { content: string }): Promise<AxiosResponse> =>
+    api.put(`${API_BASE}/projects/${projectId}/outline/volumes/${volumeId}`, data),
+  saveChapter: (projectId: string, chapterId: string, data: { content: string }): Promise<AxiosResponse> =>
+    api.put(`${API_BASE}/projects/${projectId}/outline/chapters/${chapterId}`, data),
+  generate: (projectId: string, data: { chapter_id: string; instruction: string }): Promise<AxiosResponse> =>
+    llmApi.post(`${API_BASE}/projects/${projectId}/outline/generate`, data),
 };
 
 // ============================================================================

@@ -48,6 +48,12 @@ class DeepSeekProvider(BaseLLMProvider):
             max_tokens=max_tokens or self.max_tokens
         )
         
+        if isinstance(response, str):
+            raise RuntimeError(f"DeepSeek API returned text instead of JSON: {response}")
+            
+        if not hasattr(response, "choices") or not getattr(response, "choices"):
+            raise RuntimeError(f"DeepSeek API returned invalid JSON object without choices: {response}")
+        
         return {
             "content": response.choices[0].message.content,
             "usage": {
@@ -80,8 +86,11 @@ class DeepSeekProvider(BaseLLMProvider):
             stream=True  # 启用流式输出
         )
         
+        if isinstance(response, str):
+            raise RuntimeError(f"DeepSeek streaming API returned text instead of stream: {response}")
+        
         async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
+            if hasattr(chunk, "choices") and chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
     
     def get_provider_name(self) -> str:

@@ -347,8 +347,41 @@ class WriterAgent(BaseAgent):
             include_plan=False,
         )
 
+        # 流式过滤 <think>...</think>，内容记录到日志，不输出给前端
+        in_think = False
+        think_buf = []
+        text_buf = ""
+
         async for chunk in self.call_llm_stream(messages):
-            yield chunk
+            text_buf += chunk
+            output = ""
+            while text_buf:
+                if in_think:
+                    end = text_buf.find("</think>")
+                    if end == -1:
+                        think_buf.append(text_buf)
+                        text_buf = ""
+                    else:
+                        think_buf.append(text_buf[:end])
+                        self.logger.debug("[writer think] %s", "".join(think_buf))
+                        think_buf = []
+                        in_think = False
+                        text_buf = text_buf[end + len("</think>"):]
+                else:
+                    start = text_buf.find("<think>")
+                    if start == -1:
+                        output += text_buf
+                        text_buf = ""
+                    else:
+                        output += text_buf[:start]
+                        in_think = True
+                        text_buf = text_buf[start + len("<think>"):]
+            if output:
+                yield output
+
+        # 如果流结束时 think 块未闭合，记录日志
+        if think_buf:
+            self.logger.debug("[writer think unclosed] %s", "".join(think_buf))
 
     async def _load_previous_summaries(self, project_id: str, current_chapter: str) -> List[str]:
         """加载前置章节摘要 - 从存储或构建"""
@@ -489,12 +522,6 @@ class WriterAgent(BaseAgent):
         context_items = []
         use_compact_context = bool(working_memory and str(working_memory).strip())
 
-        if chapter_goal:
-            context_items.append(
-                "GOAL PRIORITY:\n- " + str(chapter_goal).strip() + "\n"
-                "Only write content that serves the goal."
-            )
-
         brief_chapter = _get_field(scene_brief, "chapter", "")
         brief_title = _get_field(scene_brief, "title", "")
         brief_goal = _get_field(scene_brief, "goal", "")
@@ -507,7 +534,8 @@ class WriterAgent(BaseAgent):
         brief_text = f"""Scene Brief:
 Chapter: {brief_chapter}
 Title: {brief_title}
-Goal: {brief_goal}
+
+
 
 Characters:
 {self._format_characters(brief_characters)}
@@ -528,56 +556,56 @@ FORBIDDEN:
         if working_memory:
             context_items.append("Working Memory:\n" + str(working_memory))
 
-        if unresolved_gaps:
-            lines = ["未解决缺口（不得编造，必须留白或用[TO_CONFIRM:…]标记）:"]
-            for gap in unresolved_gaps[:6]:
-                if not isinstance(gap, dict):
-                    continue
-                text = str(gap.get("text") or "").strip()
-                if text:
-                    lines.append(f"- {text}")
-            if len(lines) > 1:
-                context_items.append("\n".join(lines))
-
         if style_card:
             try:
                 context_items.append("Style Card:\n" + str(style_card.model_dump()))
             except Exception:
                 context_items.append("Style Card:\n" + str(style_card))
 
-        if text_chunks:
-            lines = ["Text Chunks:"]
-            for chunk in text_chunks[:6]:
-                if isinstance(chunk, dict):
-                    chapter = chunk.get("chapter") or ""
-                    text = chunk.get("text") or ""
-                    prefix = f"[{chapter}] " if chapter else ""
-                    lines.append(prefix + text)
-                else:
-                    lines.append(str(chunk))
-            context_items.append("\n".join(lines))
-
-        if evidence_pack and isinstance(evidence_pack, dict):
-            items = evidence_pack.get("items") or []
-            if items:
-                lines = ["Evidence Pack:"]
-                for item in items[:12]:
-                    if not isinstance(item, dict):
+        if not use_compact_context:
+            if unresolved_gaps:
+                lines = ["未解决缺口（不得编造，必须留白或用[TO_CONFIRM:…]标记）:"]
+                for gap in unresolved_gaps[:6]:
+                    if not isinstance(gap, dict):
                         continue
-                    item_type = str(item.get("type") or "").strip()
-                    text = str(item.get("text") or item.get("statement") or "").strip()
-                    source = item.get("source") or {}
-                    chapter = str(source.get("chapter") or "").strip()
-                    prefix = f"[{item_type}]" if item_type else ""
-                    if chapter:
-                        prefix = f"{prefix}[{chapter}]" if prefix else f"[{chapter}]"
-                    line = f"{prefix} {text}".strip()
-                    if line:
-                        lines.append(line)
+                    text = str(gap.get("text") or "").strip()
+                    if text:
+                        lines.append(f"- {text}")
                 if len(lines) > 1:
                     context_items.append("\n".join(lines))
 
-        if not use_compact_context:
+            if text_chunks:
+                lines = ["Text Chunks:"]
+                for chunk in text_chunks[:6]:
+                    if isinstance(chunk, dict):
+                        chapter = chunk.get("chapter") or ""
+                        text = chunk.get("text") or ""
+                        prefix = f"[{chapter}] " if chapter else ""
+                        lines.append(prefix + text)
+                    else:
+                        lines.append(str(chunk))
+                context_items.append("\n".join(lines))
+
+            if evidence_pack and isinstance(evidence_pack, dict):
+                items = evidence_pack.get("items") or []
+                if items:
+                    lines = ["Evidence Pack:"]
+                    for item in items[:12]:
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = str(item.get("type") or "").strip()
+                        text = str(item.get("text") or item.get("statement") or "").strip()
+                        source = item.get("source") or {}
+                        chapter = str(source.get("chapter") or "").strip()
+                        prefix = f"[{item_type}]" if item_type else ""
+                        if chapter:
+                            prefix = f"{prefix}[{chapter}]" if prefix else f"[{chapter}]"
+                        line = f"{prefix} {text}".strip()
+                        if line:
+                            lines.append(line)
+                    if len(lines) > 1:
+                        context_items.append("\n".join(lines))
+
             if character_cards:
                 lines = ["Character Cards:"]
                 for card in character_cards[:10]:

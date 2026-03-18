@@ -202,6 +202,7 @@ const AgentStatusPanel = ({
     onAcceptAllDiff = () => { },
     onRejectAllDiff = () => { },
     onApplySelectedDiff = () => { },
+    externalInputSeed = null,
     onSubmit = () => { },
     className = ''
 }) => {
@@ -211,6 +212,11 @@ const AgentStatusPanel = ({
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
     const { t, locale } = useLocale();
+    const isOutlineMode = mode === 'outline';
+    const composerDisabled = inputDisabled || isOutlineMode;
+    const composerDisabledReason = inputDisabled
+        ? inputDisabledReason
+        : (isOutlineMode ? t('agentPanel.outlineInputHint') : '');
 
     const runs = useMemo(() => {
         const combined = [];
@@ -328,7 +334,7 @@ const AgentStatusPanel = ({
     const hasAnyContent = runs.length > 0 || Boolean(contextDebug) || hasDiffActions;
 
     const handleSubmit = () => {
-        if (inputDisabled) return;
+        if (composerDisabled) return;
         if (!inputValue.trim()) return;
         onSubmit(inputValue.trim());
         setInputValue('');
@@ -427,6 +433,16 @@ const AgentStatusPanel = ({
         };
     }, [activeChapter, memoryPackStatus, t, locale]);
 
+    useEffect(() => {
+        const seedId = externalInputSeed?.id;
+        const seedText = externalInputSeed?.text;
+        if (!seedId || typeof seedText !== 'string') return;
+        setInputValue(seedText);
+        window.requestAnimationFrame(() => {
+            updateInputHeight(inputRef.current);
+        });
+    }, [externalInputSeed?.id, externalInputSeed?.text]);
+
     return (
         <div className={`flex flex-col h-full ${className}`}>
             <div className="px-3 py-2 border-b border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
@@ -439,7 +455,7 @@ const AgentStatusPanel = ({
             <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
                 {!hasAnyContent ? (
                     /* 欢迎提示 */
-                        <div className="h-full flex flex-col items-center justify-center text-center p-6">
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6">
                         <div className="w-16 h-16 rounded-[6px] bg-[var(--vscode-list-hover)] border border-[var(--vscode-sidebar-border)] flex items-center justify-center mb-4">
                             <Sparkles size={28} className="text-[var(--vscode-focus-border)]" />
                         </div>
@@ -570,10 +586,27 @@ const AgentStatusPanel = ({
             {/* 底部输入框 */}
             <div className="flex-shrink-0 p-3 border-t border-[var(--vscode-sidebar-border)] bg-[var(--vscode-sidebar-bg)]">
                 <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1">
-                    <button
-                        type="button"
-                        onClick={() => onModeChange('create')}
+                    <div className="flex items-center gap-1">
+                        <button
+                            type="button"
+                            onClick={() => onModeChange('outline')}
+                            onMouseDown={(e) => e.preventDefault()}
+                            title={t('agentPanel.modeOutlineHint')}
+                            disabled={inputDisabled}
+                            className={[
+                                "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                mode === 'outline'
+                                    ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                    : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                inputDisabled ? "opacity-50 cursor-not-allowed" : ""
+                            ].join(' ')}
+                        >
+                            {t('agentPanel.modeOutline')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => onModeChange('create')}
+                            onMouseDown={(e) => e.preventDefault()}
                             disabled={createDisabled || inputDisabled}
                             title={createDisabled ? t('agentPanel.modeWriterTitle') : t('agentPanel.modeWriterHint')}
                             className={[
@@ -584,13 +617,14 @@ const AgentStatusPanel = ({
                                 (createDisabled || inputDisabled) ? "opacity-50 cursor-not-allowed" : ""
                             ].join(' ')}
                         >
-                        {t('agentPanel.modeWriter')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onModeChange('edit')}
-                        title={t('agentPanel.modeEditorHint')}
-                        disabled={inputDisabled}
+                            {t('agentPanel.modeWriter')}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => onModeChange('edit')}
+                            onMouseDown={(e) => e.preventDefault()}
+                            title={t('agentPanel.modeEditorHint')}
+                            disabled={inputDisabled}
                             className={[
                                 "px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors",
                                 mode === 'edit'
@@ -599,47 +633,56 @@ const AgentStatusPanel = ({
                                 inputDisabled ? "opacity-50 cursor-not-allowed" : ""
                             ].join(' ')}
                         >
-                        {t('agentPanel.modeEditor')}
-                    </button>
-                    {mode === 'edit' ? (
-                        <div className="ml-2 flex items-center gap-1">
-                            <button
-                                type="button"
-                                onClick={() => onEditContextModeChange('quick')}
-                                title={t('agentPanel.contextQuickHint')}
-                                disabled={inputDisabled}
-                                className={[
-                                    "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
-                                    editContextMode === 'quick'
-                                        ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
-                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
-                                    inputDisabled ? "opacity-50 cursor-not-allowed" : ""
-                                ].join(' ')}
-                            >
-                                {t('agentPanel.contextQuick')}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => onEditContextModeChange('full')}
-                                title={t('agentPanel.contextFullHint')}
-                                disabled={inputDisabled}
-                                className={[
-                                    "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
-                                    editContextMode === 'full'
-                                        ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
-                                        : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
-                                    inputDisabled ? "opacity-50 cursor-not-allowed" : ""
-                                ].join(' ')}
-                            >
-                                {t('agentPanel.contextFull')}
-                            </button>
-                        </div>
-                    ) : null}
+                            {t('agentPanel.modeEditor')}
+                        </button>
+                        {mode === 'edit' ? (
+                            <div className="ml-2 flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => onEditContextModeChange('quick')}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    title={t('agentPanel.contextQuickHint')}
+                                    disabled={inputDisabled}
+                                    className={[
+                                        "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                        editContextMode === 'quick'
+                                            ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                            : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                        inputDisabled ? "opacity-50 cursor-not-allowed" : ""
+                                    ].join(' ')}
+                                >
+                                    {t('agentPanel.contextQuick')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => onEditContextModeChange('full')}
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    title={t('agentPanel.contextFullHint')}
+                                    disabled={inputDisabled}
+                                    className={[
+                                        "px-2 h-7 text-[11px] rounded-[6px] border transition-colors",
+                                        editContextMode === 'full'
+                                            ? "bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]"
+                                            : "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
+                                        inputDisabled ? "opacity-50 cursor-not-allowed" : ""
+                                    ].join(' ')}
+                                >
+                                    {t('agentPanel.contextFull')}
+                                </button>
+                            </div>
+                        ) : null}
+                    </div>
+                    <span className="text-[10px] text-[var(--vscode-fg-subtle)]">
+                        {mode === 'edit'
+                            ? t('agentPanel.modeTagDiff')
+                            : (mode === 'outline' ? t('agentPanel.modeTagOutline') : t('agentPanel.modeTagStream'))}
+                    </span>
                 </div>
-                <span className="text-[10px] text-[var(--vscode-fg-subtle)]">
-                    {mode === 'edit' ? t('agentPanel.modeTagDiff') : t('agentPanel.modeTagStream')}
-                </span>
-                </div>
+                {mode === 'outline' ? (
+                    <div className="mb-2 text-[10px] text-[var(--vscode-fg-subtle)]">
+                        {t('agentPanel.outlineGuide')}
+                    </div>
+                ) : null}
                 {mode === 'edit' ? (
                     <div className="flex items-center justify-between mb-2 gap-2">
                         <div className="text-[10px] text-[var(--vscode-fg-subtle)]">
@@ -651,6 +694,7 @@ const AgentStatusPanel = ({
                                     type="button"
                                     disabled={inputDisabled}
                                     onClick={() => onEditScopeChange('document')}
+                                    onMouseDown={(e) => e.preventDefault()}
                                     className={[
                                         "px-2 h-6 text-[10px] rounded-[6px] border transition-colors",
                                         editScope === 'document'
@@ -666,6 +710,7 @@ const AgentStatusPanel = ({
                                     type="button"
                                     disabled={inputDisabled || !selectionAttachedSummary}
                                     onClick={() => onEditScopeChange('selection')}
+                                    onMouseDown={(e) => e.preventDefault()}
                                     className={[
                                         "px-2 h-6 text-[10px] rounded-[6px] border transition-colors",
                                         editScope === 'selection'
@@ -681,6 +726,7 @@ const AgentStatusPanel = ({
                                     type="button"
                                     disabled={inputDisabled || (selectionAttachedSummary && !selectionCandidateDifferent)}
                                     onClick={onAttachSelection}
+                                    onMouseDown={(e) => e.preventDefault()}
                                     className={[
                                         "px-2 h-6 text-[10px] rounded-[6px] border transition-colors",
                                         "bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]",
@@ -703,6 +749,7 @@ const AgentStatusPanel = ({
                             type="button"
                             disabled={inputDisabled}
                             onClick={onClearAttachedSelection}
+                            onMouseDown={(e) => e.preventDefault()}
                             className={[
                                 "p-1 rounded-[6px] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg-subtle)] hover:text-[var(--vscode-fg)] hover:border-[var(--vscode-focus-border)] transition-colors",
                                 inputDisabled ? "opacity-50 cursor-not-allowed" : ""
@@ -715,9 +762,9 @@ const AgentStatusPanel = ({
                     </div>
                 ) : null}
                 <div className="flex flex-col gap-2">
-                    {inputDisabled && inputDisabledReason ? (
+                    {composerDisabled && composerDisabledReason ? (
                         <div className="text-[10px] text-[var(--vscode-fg-subtle)] border border-[var(--vscode-sidebar-border)] bg-[var(--vscode-input-bg)] rounded-[6px] px-3 py-2">
-                            {inputDisabledReason}
+                            {composerDisabledReason}
                         </div>
                     ) : null}
                     <div className="flex gap-2">
@@ -731,16 +778,20 @@ const AgentStatusPanel = ({
                             }}
                             onKeyDown={handleKeyDown}
                             onFocus={(e) => updateInputHeight(e.target)}
-                            disabled={inputDisabled}
-                            placeholder={mode === 'edit' ? t('agentPanel.inputPlaceholderEdit') : t('agentPanel.inputPlaceholderCreate')}
+                            disabled={composerDisabled}
+                            placeholder={
+                                mode === 'edit'
+                                    ? t('agentPanel.inputPlaceholderEdit')
+                                    : (mode === 'outline' ? t('agentPanel.inputPlaceholderOutline') : t('agentPanel.inputPlaceholderCreate'))
+                            }
                             className={[
                                 "flex-1 px-3 py-2 text-sm border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] focus:outline-none focus:ring-1 focus:ring-[var(--vscode-focus-border)] focus:border-[var(--vscode-focus-border)] resize-none overflow-hidden min-h-[40px]",
-                                inputDisabled ? "opacity-60 cursor-not-allowed" : ""
+                                composerDisabled ? "opacity-60 cursor-not-allowed" : ""
                             ].join(' ')}
                         />
                         <button
                             onClick={handleSubmit}
-                            disabled={inputDisabled || !inputValue.trim()}
+                            disabled={composerDisabled || !inputValue.trim()}
                             className="px-3 h-10 bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] rounded-[6px] border border-[var(--vscode-input-border)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
                             <Send size={16} />

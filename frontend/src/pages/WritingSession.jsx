@@ -7,14 +7,14 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import useSWR from 'swr';
+import useSWR, { mutate as mutateSWR } from 'swr';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
-import { sessionAPI, createWebSocket, draftsAPI, cardsAPI, projectsAPI, volumesAPI, memoryPackAPI } from '../api';
-import { Button, Input } from '../components/ui/core';
+import { sessionAPI, createWebSocket, draftsAPI, cardsAPI, projectsAPI, volumesAPI, memoryPackAPI, outlineAPI } from '../api';
+import { Button, Input, cn } from '../components/ui/core';
 import AgentsPanel from '../components/ide/panels/AgentsPanel';
 import AgentStatusPanel from '../components/ide/AgentStatusPanel';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Save, Zap, Maximize2, Minimize2, Wand2 } from 'lucide-react';
 import { ChapterCreateDialog } from '../components/project/ChapterCreateDialog';
 import { IDELayout } from '../components/ide/IDELayout';
 import { IDEProvider } from '../context/IDEContext';
@@ -59,11 +59,22 @@ import {
  * @returns {JSX.Element} 写作会话主界面
  */
 function WritingSessionContent({ isEmbedded = false }) {
-  const { t, locale } = useLocale();
-  const requestLanguage = locale === 'en-US' ? 'en' : 'zh';
+    const { t, locale } = useLocale();
+    const requestLanguage = locale === 'en-US' ? 'en' : 'zh';
+    const normalizeChapterKey = useCallback((value) => String(value || '').trim().toUpperCase(), []);
+    const normalizeVolumeKey = useCallback((value) => String(value || '').trim().toUpperCase(), []);
     const { projectId } = useParams();
     const navigate = useNavigate();
     const { state, dispatch } = useIDE();
+    const [draftAutoSaveIndicator, setDraftAutoSaveIndicator] = useState('');
+
+    const [isRewriting, setIsRewriting] = useState(false);
+    const mainEditorRef = useRef(null);
+
+    // Card Gen UI state
+    const [cardGenStyle, setCardGenStyle] = useState('');
+    const [cardGenNote, setCardGenNote] = useState('');
+    const [cardGenLoading, setCardGenLoading] = useState(false);
 
     // ========================================================================
     // 项目和会话基本信息 / Project and Session Information
@@ -77,6 +88,7 @@ function WritingSessionContent({ isEmbedded = false }) {
         if (projectId) {
             projectsAPI.get(projectId).then(res => setProject(res.data));
             dispatch({ type: 'SET_PROJECT_ID', payload: projectId });
+            localStorage.setItem('wenshape_last_project', projectId);
         }
     }, [projectId, dispatch]);
 
@@ -222,9 +234,30 @@ function WritingSessionContent({ isEmbedded = false }) {
     const [currentDraftVersion, setCurrentDraftVersion] = useState('v1');
 
     // Agent mode (for AgentStatusPanel)
-    const [agentMode, setAgentMode] = useState('create'); // 'create' | 'edit'
+    const [agentMode, setAgentMode] = useState('create'); // 'outline' | 'create' | 'edit'
     const [contextDebugByChapter, setContextDebugByChapter] = useState({});
     const [editContextMode, setEditContextMode] = useState('quick'); // quick | full
+    const [outlineActionBusy, setOutlineActionBusy] = useState(false);
+    const [agentInputSeed, setAgentInputSeed] = useState(null);
+    const [chapterCanvasMode, setChapterCanvasMode] = useState('draft'); // 'draft' | 'outline'
+    const [outlineEditorScope, setOutlineEditorScope] = useState('chapter'); // 'master' | 'volume' | 'chapter'
+    const [outlineContentByScope, setOutlineContentByScope] = useState({
+        master: '',
+        volume: '',
+        chapter: '',
+    });
+    const [outlineSavedByScope, setOutlineSavedByScope] = useState({
+        master: '',
+        volume: '',
+        chapter: '',
+    });
+    const [outlineScopeIds, setOutlineScopeIds] = useState({
+        master: null,
+        volume: null,
+        chapter: null,
+    });
+    const [chapterOutlineLoading, setChapterOutlineLoading] = useState(false);
+    const [chapterOutlineError, setChapterOutlineError] = useState('');
 
     const agentBusy =
         Boolean(aiLockedChapter) &&
@@ -287,12 +320,16 @@ function WritingSessionContent({ isEmbedded = false }) {
             projectId,
             (data) => {
                 const wsChapterKey = data?.chapter ? String(data.chapter) : NO_CHAPTER_KEY;
-                if (data.type === 'start_ack') appendProgressEvent({ stage: 'session_start', message: t('writingSession.sessionStarted') }, wsChapterKey);
+                if (data.type === 'start_ack') {
+                    appendProgressEvent({ stage: 'session_start', message: t('writingSession.sessionStarted') }, wsChapterKey);
+                    setChapterCanvasMode('draft');
+                }
                 if (data.type === 'stream_start') {
                     if (wsChapterKey && wsChapterKey !== NO_CHAPTER_KEY) {
                         setAiLockedChapter(wsChapterKey);
                     }
                     streamingChapterKeyRef.current = wsChapterKey;
+                    setChapterCanvasMode('draft');
                     stopStreaming();
                     clearDiffReview();
                     serverStreamActiveRef.current = true;
@@ -557,6 +594,79 @@ function WritingSessionContent({ isEmbedded = false }) {
         };
     }, [projectId, chapterInfo.chapter, chapterInfo.chapter_title]);
 
+    useEffect(() => {
+        let active = true;
+        const loadChapterOutline = async () => {
+            if (!projectId) {
+                setOutlineContentByScope({ master: '', volume: '', chapter: '' });
+                setOutlineSavedByScope({ master: '', volume: '', chapter: '' });
+                setOutlineScopeIds({ master: null, volume: null, chapter: null });
+                setChapterOutlineError('');
+                return;
+            }
+            setChapterOutlineLoading(true);
+            setChapterOutlineError('');
+            try {
+                const chapterKey = normalizeChapterKey(chapterInfo.chapter);
+                const resp = await outlineAPI.get(projectId);
+                const payload = resp?.data || {};
+
+                const masterContent = String(payload?.master?.content || '');
+                if (!chapterInfo.chapter) {
+                    if (!active) return;
+                    setOutlineEditorScope('master');
+                    setOutlineScopeIds({ master: 'MASTER', volume: null, chapter: null });
+                    setOutlineContentByScope({ master: masterContent, volume: '', chapter: '' });
+                    setOutlineSavedByScope({ master: masterContent, volume: '', chapter: '' });
+                    return;
+                }
+
+                const chapterItem = (payload?.chapters || []).find((item) => normalizeChapterKey(item?.chapter_id) === chapterKey);
+                const inferredVolume = normalizeVolumeKey(
+                    chapterItem?.volume_id
+                    || (chapterKey.match(/^V\d+/i)?.[0])
+                    || state.selectedVolumeId
+                    || 'V1'
+                );
+                const volumeItem = (payload?.volumes || []).find((item) => normalizeVolumeKey(item?.volume_id) === inferredVolume);
+                const volumeContent = String(volumeItem?.content || '');
+                const chapterContent = String(chapterItem?.content || '');
+
+                if (!active) return;
+                setOutlineEditorScope('chapter');
+                setOutlineScopeIds({
+                    master: 'MASTER',
+                    volume: inferredVolume,
+                    chapter: chapterKey,
+                });
+                setOutlineContentByScope({
+                    master: masterContent,
+                    volume: volumeContent,
+                    chapter: chapterContent,
+                });
+                setOutlineSavedByScope({
+                    master: masterContent,
+                    volume: volumeContent,
+                    chapter: chapterContent,
+                });
+            } catch (e) {
+                if (!active) return;
+                setChapterOutlineError(e?.response?.data?.detail || e?.message || t('error.loadFailed'));
+            } finally {
+                if (active) {
+                    setChapterOutlineLoading(false);
+                }
+            }
+        };
+        loadChapterOutline();
+        const handleOutlineUpdated = () => { if (active) loadChapterOutline(); };
+        window.addEventListener('wenshape:outline-updated', handleOutlineUpdated);
+        return () => {
+            active = false;
+            window.removeEventListener('wenshape:outline-updated', handleOutlineUpdated);
+        };
+    }, [projectId, chapterInfo.chapter, state.selectedVolumeId, normalizeChapterKey, normalizeVolumeKey, t]);
+
     // 监听 Context 中的 Dialog 状态
     useEffect(() => {
         if (state.createChapterDialogOpen !== showChapterDialog) {
@@ -653,6 +763,9 @@ function WritingSessionContent({ isEmbedded = false }) {
                 type: 'SET_ACTIVE_DOCUMENT',
                 payload: { type: 'chapter', id: normalizedChapter, title: chapterTitle || '' }
             });
+            await mutateSWR(`/drafts/${projectId}/chapters`);
+            await mutateSWR(`/drafts/${projectId}/summaries`);
+            await mutateSWR(`/outline/${projectId}`);
         } catch (e) {
             addMessage('error', t('writingSession.chapterCreateFailed') + e.message);
         } finally {
@@ -663,6 +776,13 @@ function WritingSessionContent({ isEmbedded = false }) {
         setManualContent('');
         stopStreaming();
         clearDiffReview();
+        setAgentMode('outline');
+        setChapterCanvasMode('outline');
+        if (state.activeActivity !== 'explorer') {
+            dispatch({ type: 'SET_ACTIVE_PANEL', payload: 'explorer' });
+        } else if (!state.sidePanelVisible) {
+            dispatch({ type: 'TOGGLE_LEFT_PANEL' });
+        }
         setShowChapterDialog(false);
         setStatus('idle');
         await loadChapters();
@@ -733,6 +853,10 @@ function WritingSessionContent({ isEmbedded = false }) {
                 if (resp.data?.success) {
                     autosaveLastPayloadRef.current = { chapter: chapterInfo.chapter, content: nextContent, title: nextTitle };
                     await mutateChapter(nextContent, false);
+                    if (nextTitle) {
+                        await mutateSWR(`/drafts/${projectId}/summaries`);
+                        await mutateSWR(`/outline/${projectId}`);
+                    }
                     dispatch({ type: 'SET_AUTOSAVED' });
                 }
             } catch (e) {
@@ -1271,6 +1395,250 @@ function WritingSessionContent({ isEmbedded = false }) {
         }
     };
 
+    const handleAgentModeChange = useCallback((nextMode) => {
+        setAgentMode(nextMode);
+        if (nextMode === 'outline') {
+            if (state.activeActivity !== 'explorer') {
+                dispatch({ type: 'SET_ACTIVE_PANEL', payload: 'explorer' });
+            } else if (!state.sidePanelVisible) {
+                dispatch({ type: 'TOGGLE_LEFT_PANEL' });
+            }
+        }
+    }, [dispatch, state.activeActivity, state.sidePanelVisible]);
+
+    const handleChapterCanvasModeChange = useCallback((nextMode) => {
+        setChapterCanvasMode(nextMode);
+        setChapterOutlineError('');
+        if (nextMode === 'outline') {
+            handleAgentModeChange('outline');
+        } else if (agentMode === 'outline') {
+            setAgentMode('create');
+        }
+    }, [handleAgentModeChange, agentMode]);
+
+    // ==== AI Card Generation ====
+    const handleGenerateCardDescription = useCallback(async () => {
+        if (!cardForm.name || !projectId) return;
+        setCardGenLoading(true);
+        try {
+            const params = {
+                card_id: cardForm.id || `temp_${Date.now()}`,
+                name: cardForm.name,
+                category: cardForm.category || 'general',
+                style_prompt: cardGenStyle,
+                note: cardGenNote,
+                use_outline: true, // Let backend pull active outline contents if needed
+            };
+            const response = await cardsAPI.generateDescription(projectId, params);
+            if (response.data && response.data.description) {
+                setCardForm(prev => ({ ...prev, description: response.data.description }));
+                addMessage('assistant', `✨ 已提取大纲及设定，成功为【${cardForm.name}】生成了描述。`);
+            }
+        } catch (err) {
+            console.error("Card gen failed:", err);
+            addMessage('error', '生成描述失败: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setCardGenLoading(false);
+        }
+    }, [projectId, cardForm, cardGenStyle, cardGenNote, addMessage, cardsAPI]);
+
+    const handleRewriteSelection = async () => {
+        if (!selectionInfo || !selectionInfo.text) {
+            addMessage('system', t('writingSession.noSelectionForRewrite') || '请先在正文中选中需要口语化润色的段落');
+            return;
+        }
+
+        const { start, end, text } = selectionInfo;
+
+        setIsRewriting(true);
+        try {
+            const resp = await draftsAPI.rewriteText(projectId, text);
+            if (resp.data.success && resp.data.rewritten) {
+                const rewritten = resp.data.rewritten;
+
+                // 为了保留原生的 Command/Ctrl + Z 撤销栈，使用 document.execCommand
+                if (mainEditorRef.current) {
+                    mainEditorRef.current.focus();
+                    mainEditorRef.current.setSelectionRange(start, end);
+                    // 插入时也会自动触发 onChange 处理其它状态的同步
+                    const success = document.execCommand('insertText', false, rewritten);
+
+                    if (!success) {
+                        // 回退到基于 React State 的赋值 (此时可能丢失一次 undo)
+                        const currentText = manualContent;
+                        const newText = currentText.substring(0, start) + rewritten + currentText.substring(end);
+
+                        // 强制触发原生 input 事件供 react 绑定捕获以规避 state 不同步问题
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                        nativeInputValueSetter.call(mainEditorRef.current, newText);
+                        mainEditorRef.current.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                }
+
+                // Clear selection
+                setSelectionInfo(null);
+                dispatch({ type: 'SET_SELECTION_COUNT', payload: 0 });
+
+                addMessage('assistant', '✨ ' + (t('writingSession.rewriteComplete') || '口语化重写已完成！一段充满网感的新文本已经替换了你的选区。'));
+            }
+        } catch (e) {
+            console.error('Rewrite error:', e);
+            addMessage('error', (t('writingSession.rewriteFailed') || '重写请求失败: ') + e.message);
+        } finally {
+            setIsRewriting(false);
+        }
+    };
+
+    const saveOutlineByScope = useCallback(async (scope = outlineEditorScope) => {
+        if (!projectId) {
+            return { success: false, error: t('writingSession.selectChapterFirst') };
+        }
+
+        const scopedContent = String(outlineContentByScope?.[scope] || '');
+        const chapterKey = normalizeChapterKey(chapterInfo.chapter);
+        const volumeId = normalizeVolumeKey(outlineScopeIds?.volume || chapterKey.match(/^V\d+/i)?.[0] || 'V1');
+
+        if (scope === 'chapter' && !chapterInfo.chapter) {
+            return { success: false, error: t('writingSession.selectChapterFirst') };
+        }
+
+        try {
+            if (scope === 'master') {
+                await outlineAPI.saveMaster(projectId, { content: scopedContent });
+            } else if (scope === 'volume') {
+                await outlineAPI.saveVolume(projectId, volumeId, { content: scopedContent });
+            } else {
+                await outlineAPI.saveChapter(projectId, chapterKey, { content: scopedContent });
+            }
+            await mutateSWR(`/outline/${projectId}`);
+            setOutlineSavedByScope((prev) => ({
+                ...prev,
+                [scope]: scopedContent,
+            }));
+            setChapterOutlineError('');
+            return { success: true };
+        } catch (e) {
+            const errorMsg = e?.response?.data?.detail || e?.message || t('writingSession.outlineSaveFailed');
+            setChapterOutlineError(errorMsg);
+            return { success: false, error: errorMsg };
+        }
+    }, [projectId, outlineEditorScope, outlineContentByScope, chapterInfo.chapter, outlineScopeIds?.volume, normalizeChapterKey, normalizeVolumeKey, t]);
+
+    const requestOutlineSave = useCallback(async () => {
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        return await new Promise((resolve) => {
+            let settled = false;
+
+            const cleanup = () => {
+                window.removeEventListener('wenshape:outline:save-current:result', onResult);
+                if (timer) {
+                    window.clearTimeout(timer);
+                }
+            };
+
+            const onResult = (event) => {
+                const detail = event?.detail || {};
+                if (detail.requestId !== requestId) return;
+                settled = true;
+                cleanup();
+                resolve({
+                    success: Boolean(detail.success),
+                    error: detail.error || '',
+                });
+            };
+
+            const timer = window.setTimeout(() => {
+                if (settled) return;
+                cleanup();
+                resolve({ success: false, error: t('writingSession.outlineSaveTimeout') });
+            }, 2200);
+
+            window.addEventListener('wenshape:outline:save-current:result', onResult);
+            window.dispatchEvent(new CustomEvent('wenshape:outline:save-current', {
+                detail: { requestId },
+            }));
+        });
+    }, [t]);
+
+    const buildOutlinePrompt = useCallback((outlinePayload, chapterId) => {
+        const chapter = String(chapterId || '').trim().toUpperCase();
+        const chapterItem = (outlinePayload?.chapters || []).find((item) => String(item?.chapter_id || '').toUpperCase() === chapter);
+        const volumeId = chapterItem?.volume_id || (chapter.match(/^V\d+/i)?.[0] || 'V1').toUpperCase();
+        const volumeItem = (outlinePayload?.volumes || []).find((item) => String(item?.volume_id || '').toUpperCase() === volumeId);
+
+        const master = String(outlinePayload?.master?.content || '').trim();
+        const volume = String(volumeItem?.content || '').trim();
+        const chapterOutline = String(chapterItem?.content || '').trim();
+
+        const sections = [];
+        if (master) sections.push(`[总纲]\n${master}`);
+        if (volume) sections.push(`[分卷纲 ${volumeId}]\n${volume}`);
+        if (chapterOutline) sections.push(`[章节细纲 ${chapter}]\n${chapterOutline}`);
+
+        const body = sections.length > 0 ? sections.join('\n\n') : t('writingSession.outlineEmptyFallback');
+
+        return `${body}\n\n[写作任务]\n请严格依据以上大纲，创作本章正文（章节：${chapter}）。先保证剧情推进与设定一致，再保证文风与节奏。`;
+    }, [t]);
+
+    const outlineScopeLabelMap = {
+        master: t('writingSession.outlineScopeMaster'),
+        volume: t('writingSession.outlineScopeVolume').replace('{id}', String(outlineScopeIds?.volume || 'V1')),
+        chapter: t('writingSession.outlineScopeChapter').replace('{id}', String(outlineScopeIds?.chapter || normalizeChapterKey(chapterInfo.chapter) || '')),
+    };
+    const currentOutlineContent = String(outlineContentByScope?.[outlineEditorScope] || '');
+    const currentOutlineSavedContent = String(outlineSavedByScope?.[outlineEditorScope] || '');
+    const outlineScopePlaceholder = outlineEditorScope === 'master'
+        ? t('writingSession.outlineMasterPlaceholder')
+        : (outlineEditorScope === 'volume'
+            ? t('writingSession.outlineVolumePlaceholder').replace('{id}', String(outlineScopeIds?.volume || 'V1'))
+            : t('writingSession.outlineChapterPlaceholder').replace('{id}', String(outlineScopeIds?.chapter || normalizeChapterKey(chapterInfo.chapter) || '')));
+
+    const handleOutlineSaveAction = useCallback(async () => {
+        handleAgentModeChange('outline');
+        setOutlineActionBusy(true);
+        try {
+            const saved = chapterCanvasMode === 'outline'
+                ? await saveOutlineByScope(outlineEditorScope)
+                : await requestOutlineSave();
+            if (!saved.success) {
+                addMessage('error', t('writingSession.outlineSaveFailed') + (saved.error ? `: ${saved.error}` : ''));
+                return;
+            }
+            addMessage('system', t('writingSession.outlineSaved'));
+        } finally {
+            setOutlineActionBusy(false);
+        }
+    }, [handleAgentModeChange, requestOutlineSave, saveOutlineByScope, outlineEditorScope, chapterCanvasMode, addMessage, t]);
+
+    const handleOutlineInjectAction = useCallback(async () => {
+        if (!chapterInfo.chapter) {
+            addMessage('system', t('writingSession.selectChapterFirst'));
+            return;
+        }
+        handleAgentModeChange('outline');
+        setOutlineActionBusy(true);
+        try {
+            const saved = chapterCanvasMode === 'outline'
+                ? await saveOutlineByScope(outlineEditorScope)
+                : await requestOutlineSave();
+            if (!saved.success) {
+                addMessage('error', t('writingSession.outlineSaveFailed') + (saved.error ? `: ${saved.error}` : ''));
+                return;
+            }
+
+            const outlineResp = await outlineAPI.get(projectId);
+            const prompt = buildOutlinePrompt(outlineResp?.data || {}, chapterInfo.chapter);
+
+            setAgentInputSeed({ id: Date.now(), text: prompt });
+            handleAgentModeChange('create');
+            addMessage('system', t('writingSession.outlineInjected').replace('{id}', String(chapterInfo.chapter)));
+        } catch (e) {
+            addMessage('error', t('writingSession.outlineInjectFailed') + (e?.response?.data?.detail || e?.message || ''));
+        } finally {
+            setOutlineActionBusy(false);
+        }
+    }, [chapterInfo.chapter, handleAgentModeChange, requestOutlineSave, saveOutlineByScope, outlineEditorScope, chapterCanvasMode, projectId, buildOutlinePrompt, addMessage, t]);
+
     const handleAcceptAllDiff = () => {
         if (!diffReview) return;
         const nextContent = diffReview.revisedContent || '';
@@ -1360,6 +1728,8 @@ function WritingSessionContent({ isEmbedded = false }) {
             if (typeof resp.data?.title === 'string' && resp.data.title.trim()) {
                 setChapterInfo((prev) => ({ ...prev, chapter_title: resp.data.title }));
             }
+            await mutateSWR(`/drafts/${projectId}/summaries`);
+            await mutateSWR(`/outline/${projectId}`);
             dispatch({ type: 'SET_SAVED' });
             mutateChapter(manualContent, false);
         }
@@ -1650,7 +2020,45 @@ function WritingSessionContent({ isEmbedded = false }) {
 
                             {/* Card Description */}
                             <div className="space-y-1">
-                                <label className="text-xs font-bold text-ink-500 tracking-wider">{t('card.fieldDescription')}</label>
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="text-xs font-bold text-ink-500 tracking-wider">
+                                        {t('card.fieldDescription')}
+                                    </label>
+
+                                    {/* AI 生成工具条 */}
+                                    {cardForm.name && cardForm.name.trim() !== '' && (
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="text"
+                                                placeholder="文风提示(可选)"
+                                                value={cardGenStyle}
+                                                onChange={e => setCardGenStyle(e.target.value)}
+                                                className="w-28 text-xs p-1 rounded border border-border bg-bg-alt focus:outline-none focus:border-brand-500"
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="补充说明(可选)"
+                                                value={cardGenNote}
+                                                onChange={e => setCardGenNote(e.target.value)}
+                                                className="w-28 text-xs p-1 rounded border border-border bg-bg-alt focus:outline-none focus:border-brand-500"
+                                            />
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-6 text-xs px-2 text-brand-600 hover:text-brand-700 hover:bg-brand-50 flex items-center gap-1"
+                                                onClick={handleGenerateCardDescription}
+                                                disabled={cardGenLoading}
+                                                title="AI 自动生成描述（基于设定的名字和可用大纲）"
+                                            >
+                                                {cardGenLoading ? (
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                ) : (
+                                                    <span className="text-[10px]">✨ AI 生成</span>
+                                                )}
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
                                 <textarea
                                     className="w-full min-h-[200px] p-3 rounded-[6px] border border-[var(--vscode-input-border)] bg-[var(--vscode-input-bg)] text-sm focus:ring-1 focus:ring-[var(--vscode-focus-border)] resize-none overflow-hidden"
                                     value={cardForm.description || ''}
@@ -1679,7 +2087,7 @@ function WritingSessionContent({ isEmbedded = false }) {
                     >
                         <div className="text-center">
                             <div className="flex flex-col items-center gap-2 mb-4">
-                                <span className="brand-logo text-4xl text-ink-900/40">文枢</span>
+                                <span className="brand-logo text-4xl text-ink-900/40">写作agent</span>
                             </div>
                             <p className="text-sm text-ink-500">
                                 {t('writingSession.selectResourceHint')}
@@ -1708,8 +2116,100 @@ function WritingSessionContent({ isEmbedded = false }) {
                                 disabled={!chapterInfo.chapter}
                             />
                         </div>
+                        <div className="mb-3 flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => handleChapterCanvasModeChange('draft')}
+                                className={cn(
+                                    'px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors',
+                                    chapterCanvasMode === 'draft'
+                                        ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]'
+                                        : 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]'
+                                )}
+                            >
+                                {t('writingSession.editorLayerDraft')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleChapterCanvasModeChange('outline')}
+                                className={cn(
+                                    'px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors',
+                                    chapterCanvasMode === 'outline'
+                                        ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]'
+                                        : 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]'
+                                )}
+                            >
+                                {t('writingSession.editorLayerOutline')}
+                            </button>
+                        </div>
                         <div className="flex-1 overflow-hidden bg-[var(--vscode-bg)] border-t border-[var(--vscode-sidebar-border)]">
-                            {isDiffReviewForActiveChapter ? (
+                            {chapterCanvasMode === 'outline' ? (
+                                <div className="h-full p-4">
+                                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setOutlineEditorScope('master')}
+                                            className={cn(
+                                                'px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors',
+                                                outlineEditorScope === 'master'
+                                                    ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]'
+                                                    : 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]'
+                                            )}
+                                        >
+                                            {outlineScopeLabelMap.master}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOutlineEditorScope('volume')}
+                                            className={cn(
+                                                'px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors',
+                                                outlineEditorScope === 'volume'
+                                                    ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]'
+                                                    : 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]'
+                                            )}
+                                        >
+                                            {outlineScopeLabelMap.volume}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setOutlineEditorScope('chapter')}
+                                            className={cn(
+                                                'px-2.5 h-7 text-[11px] rounded-[6px] border transition-colors',
+                                                outlineEditorScope === 'chapter'
+                                                    ? 'bg-[var(--vscode-list-active)] text-[var(--vscode-list-active-fg)] border-[var(--vscode-input-border)]'
+                                                    : 'bg-[var(--vscode-input-bg)] text-[var(--vscode-fg)] border-[var(--vscode-sidebar-border)] hover:border-[var(--vscode-focus-border)]'
+                                            )}
+                                        >
+                                            {outlineScopeLabelMap.chapter}
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        className="h-full w-full resize-none border border-[var(--vscode-input-border)] rounded-[6px] bg-[var(--vscode-input-bg)] p-4 text-sm text-[var(--vscode-fg)] leading-relaxed focus:outline-none focus:border-[var(--vscode-focus-border)] overflow-y-auto editor-scrollbar"
+                                        value={currentOutlineContent}
+                                        onChange={(e) => {
+                                            const next = e.target.value;
+                                            setOutlineContentByScope((prev) => ({
+                                                ...prev,
+                                                [outlineEditorScope]: next,
+                                            }));
+                                        }}
+                                        placeholder={outlineScopePlaceholder}
+                                        disabled={!chapterInfo.chapter || chapterOutlineLoading}
+                                        spellCheck={false}
+                                    />
+                                    {chapterOutlineLoading ? (
+                                        <div className="mt-2 text-[11px] text-[var(--vscode-fg-subtle)]">{t('common.loading')}</div>
+                                    ) : null}
+                                    {chapterOutlineError ? (
+                                        <div className="mt-2 text-[11px] text-red-500">{chapterOutlineError}</div>
+                                    ) : null}
+                                    {!chapterOutlineError && !chapterOutlineLoading && currentOutlineContent !== currentOutlineSavedContent ? (
+                                        <div className="mt-2 text-[11px] text-[var(--vscode-fg-subtle)]">
+                                            {t('writingSession.outlineUnsavedHint').replace('{scope}', outlineScopeLabelMap[outlineEditorScope] || '')}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            ) : isDiffReviewForActiveChapter ? (
                                 <DiffReviewView
                                     ops={diffReview.ops}
                                     hunks={diffReview.hunks}
@@ -1727,55 +2227,75 @@ function WritingSessionContent({ isEmbedded = false }) {
                                     className="h-full"
                                 />
                             ) : (
-                                <textarea
-                                    className="h-full w-full resize-none border-none outline-none bg-transparent p-6 text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300 overflow-y-auto editor-scrollbar"
-                                    value={manualContent}
-                                    onChange={(e) => {
-                                        const nextValue = e.target.value;
-                                        setManualContent(nextValue);
-                                        if (chapterInfo.chapter) {
-                                            const key = String(chapterInfo.chapter);
-                                            setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextValue }));
-                                        }
-                                        dispatch({ type: 'SET_WORD_COUNT', payload: countWords(nextValue, writingLanguage) });
-                                        const stats = getSelectionStats(nextValue, e.target.selectionStart, e.target.selectionEnd, writingLanguage);
-                                        dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
-                                        setSelectionInfo({
-                                            start: stats.selectionStart,
-                                            end: stats.selectionEnd,
-                                            text: stats.selectionText || '',
-                                        });
-                                        const lines = stats.cursorText.split('\n');
-                                        dispatch({
-                                            type: 'SET_CURSOR_POSITION',
-                                            payload: {
-                                                line: lines.length,
-                                                column: lines[lines.length - 1].length + 1
+                                <div className="h-full w-full relative flex flex-col">
+                                    <div className="flex-none p-1 shrink-0 bg-bg/50 border-b border-border flex justify-between items-center z-10">
+                                        <div className="flex gap-2 text-xs">
+                                            {/* De-AI Rewrite Button, only shows when text is selected */}
+                                            {selectionInfo && selectionInfo.text && (
+                                                <button
+                                                    onClick={handleRewriteSelection}
+                                                    onMouseDown={(e) => e.preventDefault()}
+                                                    disabled={isRewriting}
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-50 hover:bg-brand-100 text-brand-700 font-medium transition-colors border border-brand-200 shadow-sm"
+                                                    title="将选中的文本进行去机器味的混沌增益口语化重构"
+                                                >
+                                                    <Wand2 size={14} className={isRewriting ? "animate-pulse" : ""} />
+                                                    {isRewriting ? '正在口语化...' : '🪄 口语化重写 (去 AI 味)'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <textarea
+                                        ref={mainEditorRef}
+                                        className="flex-1 w-full resize-none border-none outline-none bg-transparent p-6 text-base font-serif text-ink-900 leading-relaxed focus:ring-0 placeholder:text-ink-300 overflow-y-auto editor-scrollbar min-h-0"
+                                        value={manualContent}
+                                        onChange={(e) => {
+                                            const nextValue = e.target.value;
+                                            setManualContent(nextValue);
+                                            if (chapterInfo.chapter) {
+                                                const key = String(chapterInfo.chapter);
+                                                setManualContentByChapter((prev) => ({ ...(prev || {}), [key]: nextValue }));
                                             }
-                                        });
-                                        dispatch({ type: 'SET_UNSAVED' });
-                                    }}
-                                    onSelect={(e) => {
-                                        const stats = getSelectionStats(e.target.value, e.target.selectionStart, e.target.selectionEnd, writingLanguage);
-                                        dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
-                                        setSelectionInfo({
-                                            start: stats.selectionStart,
-                                            end: stats.selectionEnd,
-                                            text: stats.selectionText || '',
-                                        });
-                                        const lines = stats.cursorText.split('\n');
-                                        dispatch({
-                                            type: 'SET_CURSOR_POSITION',
-                                            payload: {
-                                                line: lines.length,
-                                                column: lines[lines.length - 1].length + 1
-                                            }
-                                        });
-                                    }}
-                                    placeholder={t('writingSession.writePlaceholder')}
-                                    disabled={!chapterInfo.chapter || lockedOnActiveChapter}
-                                    spellCheck={false}
-                                />
+                                            dispatch({ type: 'SET_WORD_COUNT', payload: countWords(nextValue, writingLanguage) });
+                                            const stats = getSelectionStats(nextValue, e.target.selectionStart, e.target.selectionEnd, writingLanguage);
+                                            dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
+                                            setSelectionInfo({
+                                                start: stats.selectionStart,
+                                                end: stats.selectionEnd,
+                                                text: stats.selectionText || '',
+                                            });
+                                            const lines = stats.cursorText.split('\n');
+                                            dispatch({
+                                                type: 'SET_CURSOR_POSITION',
+                                                payload: {
+                                                    line: lines.length,
+                                                    column: lines[lines.length - 1].length + 1
+                                                }
+                                            });
+                                            dispatch({ type: 'SET_UNSAVED' });
+                                        }}
+                                        onSelect={(e) => {
+                                            const stats = getSelectionStats(e.target.value, e.target.selectionStart, e.target.selectionEnd, writingLanguage);
+                                            dispatch({ type: 'SET_SELECTION_COUNT', payload: stats.selectionCount });
+                                            setSelectionInfo({
+                                                start: stats.selectionStart,
+                                                end: stats.selectionEnd,
+                                                text: stats.selectionText || '',
+                                            });
+                                            const lines = stats.cursorText.split('\n');
+                                            dispatch({
+                                                type: 'SET_CURSOR_POSITION',
+                                                payload: {
+                                                    line: lines.length,
+                                                    column: lines[lines.length - 1].length + 1
+                                                }
+                                            });
+                                        }}
+                                        placeholder={t('writingSession.writePlaceholder')}
+                                        disabled={!chapterInfo.chapter || lockedOnActiveChapter}
+                                        spellCheck={false}
+                                    />
+                                </div>
                             )}
                         </div>
 
@@ -1789,8 +2309,9 @@ function WritingSessionContent({ isEmbedded = false }) {
         <AgentsPanel traceEvents={traceEvents} agentTraces={agentTraces}>
             <AgentStatusPanel
                 mode={agentMode}
-                onModeChange={setAgentMode}
+                onModeChange={handleAgentModeChange}
                 createDisabled={!canUseWriter}
+                externalInputSeed={agentInputSeed}
                 inputDisabled={agentBusy && String(aiLockedChapter || '') !== activeChapterKey}
                 inputDisabledReason={
                     agentBusy && String(aiLockedChapter || '') !== activeChapterKey
@@ -1847,6 +2368,12 @@ function WritingSessionContent({ isEmbedded = false }) {
                         return;
                     }
 
+                    if (agentMode === 'outline') {
+                        handleAgentModeChange('outline');
+                        addMessage('system', t('agentPanel.outlineInputHint'));
+                        return;
+                    }
+
                     if (agentMode === 'create') {
                         if (!canUseWriter) {
                             addMessage('system', t('writingSession.chapterNotWritable'));
@@ -1865,9 +2392,9 @@ function WritingSessionContent({ isEmbedded = false }) {
     );
 
 
-    
+
     const saveBusy = isSaving || analysisLoading || analysisSaving;
-    const showSaveAction = (chapterInfo.chapter || status === 'card_editing') && !lockedOnActiveChapter;
+    const showSaveAction = (chapterInfo.chapter || status === 'card_editing' || agentMode === 'outline') && !lockedOnActiveChapter;
     const saveAction = showSaveAction ? (
         status === 'card_editing' ? (
             <Button
@@ -1878,6 +2405,24 @@ function WritingSessionContent({ isEmbedded = false }) {
             >
                 {isSaving ? '\u4fdd\u5b58\u4e2d...' : '\u4fdd\u5b58'}
             </Button>
+        ) : agentMode === 'outline' ? (
+            <div className="flex items-center gap-2">
+                <Button
+                    onClick={handleOutlineSaveAction}
+                    disabled={outlineActionBusy}
+                    size="sm"
+                    variant="outline"
+                >
+                    {outlineActionBusy ? t('common.processing') : t('writingSession.saveOutline')}
+                </Button>
+                <Button
+                    onClick={handleOutlineInjectAction}
+                    disabled={outlineActionBusy || !chapterInfo.chapter}
+                    size="sm"
+                >
+                    {outlineActionBusy ? t('common.processing') : t('writingSession.extractOutlineToPrompt')}
+                </Button>
+            </div>
         ) : (
             <SaveMenu
                 disabled={!chapterInfo.chapter || saveBusy}

@@ -73,6 +73,17 @@ const initialState = {
  */
 function ideReducer(state, action) {
     switch (action.type) {
+        case 'RESET_LAYOUT':
+            return {
+                ...state,
+                // Only reset layout-related knobs; keep project/document/editor state as-is.
+                sidePanelVisible: true,
+                rightPanelVisible: true,
+                sidePanelWidth: 300,
+                rightPanelWidth: 350,
+                zenMode: false,
+            };
+
         // 面板控制动作 / Panel Control Actions
         case 'SET_ACTIVE_PANEL':
             // 如果点击相同的面板，切换可见性 / If clicking the same panel, toggle visibility
@@ -88,7 +99,25 @@ function ideReducer(state, action) {
             return { ...state, rightPanelVisible: !state.rightPanelVisible };
 
         case 'SET_PANEL_WIDTH':
-            return { ...state, [action.panel === 'left' ? 'sidePanelWidth' : 'rightPanelWidth']: action.width };
+            // Backward compatible with older dispatch signature:
+            // - New: { type: 'SET_PANEL_WIDTH', panel: 'left'|'right', width: number }
+            // - Old: { type: 'SET_PANEL_WIDTH', payload: number } (used in SidePanel.jsx previously)
+            {
+                const panel = action.panel ?? action.payload?.panel ?? 'left';
+                const rawWidth = action.width ?? action.payload?.width ?? action.payload;
+                const key = panel === 'right' ? 'rightPanelWidth' : 'sidePanelWidth';
+                const current = state[key];
+                const next =
+                    typeof rawWidth === 'number' && Number.isFinite(rawWidth) ? rawWidth : current;
+
+                // Guard rails: prevent panels from swallowing the whole layout.
+                const clamped =
+                    key === 'sidePanelWidth'
+                        ? Math.max(160, Math.min(600, next))
+                        : Math.max(260, Math.min(720, next));
+
+                return { ...state, [key]: clamped };
+            }
 
         // 文档和项目状态 / Document and Project State
         case 'SET_ACTIVE_DOCUMENT':
@@ -197,4 +226,3 @@ export function useIDE() {
     if (!context) throw new Error('useIDE must be used within IDEProvider');
     return context;
 }
-

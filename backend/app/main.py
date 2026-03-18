@@ -26,6 +26,7 @@ from app.routers import (
     evidence_router,
     bindings_router,
     memory_pack_router,
+    outline_router,
 )
 from app.routers.fanfiction import router as fanfiction_router
 from app.routers.websocket import router as websocket_router
@@ -135,6 +136,7 @@ routers = [
     evidence_router,
     bindings_router,
     memory_pack_router,
+    outline_router,
 ]
 
 for router in routers:

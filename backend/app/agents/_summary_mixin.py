@@ -87,7 +87,11 @@ class SummaryMixin:
                 chapter=chapter,
                 yaml_content=yaml_content,
             )
-        except Exception:
+        except Exception as exc:
+            logger.exception(
+                "extract_canon_updates failed project_id=%s chapter=%s: %s",
+                project_id, chapter, exc
+            )
             return {"facts": [], "timeline_events": [], "character_states": []}
 
     async def bind_focus_characters(
@@ -298,10 +302,54 @@ class SummaryMixin:
         yaml_content: str,
     ) -> Dict[str, Any]:
         """Parse canon update YAML."""
-        data = yaml.safe_load(yaml_content) or {}
+        yaml_content = str(yaml_content or "")
+        logger.warning(
+            "canon_updates yaml received project_id=%s chapter=%s len=%s",
+            project_id,
+            chapter,
+            len(yaml_content),
+        )
+        logger.warning("canon_updates yaml head=%r", yaml_content[:800])
+        logger.warning("canon_updates yaml tail=%r", yaml_content[-800:])
+
+        try:
+            data = yaml.safe_load(yaml_content) or {}
+        except Exception as exc:
+            logger.exception(
+                "canon_updates yaml.safe_load failed project_id=%s chapter=%s: %s",
+                project_id,
+                chapter,
+                exc,
+            )
+            raise
+
+        logger.warning(
+            "canon_updates parsed type=%s keys=%s",
+            type(data).__name__,
+            list(data.keys()) if isinstance(data, dict) else None,
+        )
+
+        facts_preview = None
+        if isinstance(data, dict):
+            facts_preview = data.get("facts")
+        elif isinstance(data, list):
+            facts_preview = data
+
+        try:
+            facts_len = len(facts_preview or [])
+        except Exception:
+            facts_len = None
+        logger.warning(
+            "canon_updates facts preview type=%s len=%s",
+            type(facts_preview).__name__ if facts_preview is not None else None,
+            facts_len,
+        )
+        if isinstance(facts_preview, list) and facts_preview:
+            logger.warning("canon_updates facts sample=%r", facts_preview[:2])
 
         existing_facts = await self.canon_storage.get_all_facts(project_id)
         next_fact_index = len(existing_facts) + 1
+        logger.warning("canon_updates existing facts=%s next_fact_index=%s", len(existing_facts or []), next_fact_index)
 
         raw_facts: List[Tuple[str, float]] = []
         for item in data.get("facts", []) or []:
@@ -321,11 +369,14 @@ class SummaryMixin:
                 continue
             raw_facts.append((statement.strip(), max(0.0, min(1.0, confidence))))
 
+        logger.warning("canon_updates raw facts candidates=%s", len(raw_facts))
+
         selected_facts = self._select_high_value_facts(
             candidates=raw_facts,
             existing_statements=[f.statement for f in (existing_facts or []) if getattr(f, "statement", None)],
             limit=self.MAX_FACTS,
         )
+        logger.warning("canon_updates selected facts=%s (limit=%s)", len(selected_facts or []), self.MAX_FACTS)
 
         facts: List[Fact] = []
         for statement, confidence in selected_facts:

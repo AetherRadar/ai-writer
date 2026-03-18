@@ -77,9 +77,35 @@ export function IDELayout({ children, rightPanelContent, titleBarProps = {} }) {
                 {/* 右侧 AI 侧边栏 - Right Panel (AI Sidebar) */}
                 {!state.zenMode && state.rightPanelVisible && (
                     <div
-                        className="border-l border-[var(--vscode-sidebar-border)] flex-shrink-0 bg-[var(--vscode-sidebar-bg)] overflow-hidden flex flex-col"
+                        className="border-l border-[var(--vscode-sidebar-border)] flex-shrink-0 bg-[var(--vscode-sidebar-bg)] overflow-hidden flex flex-col relative group"
                         style={{ width: state.rightPanelWidth }}
                     >
+                        {/* Width Resize Handle (Right Panel) */}
+                        <div
+                            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors z-50"
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                const startX = e.pageX;
+                                const startWidth = state.rightPanelWidth;
+
+                                const handleMouseMove = (moveEvent) => {
+                                    const delta = moveEvent.pageX - startX;
+                                    // Dragging left increases width; dragging right decreases width.
+                                    const newWidth = startWidth - delta;
+                                    dispatch({ type: 'SET_PANEL_WIDTH', panel: 'right', width: newWidth });
+                                };
+
+                                const handleMouseUp = () => {
+                                    document.removeEventListener('mousemove', handleMouseMove);
+                                    document.removeEventListener('mouseup', handleMouseUp);
+                                };
+
+                                document.addEventListener('mousemove', handleMouseMove);
+                                document.addEventListener('mouseup', handleMouseUp);
+                            }}
+                            title="Drag to resize"
+                            aria-label="Resize right panel"
+                        />
                         {rightPanelContent}
                     </div>
                 )}

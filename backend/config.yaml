@@ -7,7 +7,7 @@
 # COMMERCIAL USE IS STRICTLY PROHIBITED.
 
 llm:
-  default_provider: deepseek
+  default_provider: custom
   providers:
     openai:
       api_key: ${OPENAI_API_KEY}
@@ -40,13 +40,13 @@ llm:
 # Agent Configuration / Agent 配置
 agents:
   archivist:
-    provider: openai
+    provider: custom
     temperature: 0.3
   writer:
-    provider: anthropic
+    provider: custom
     temperature: 0.7
   editor:
-    provider: anthropic
+    provider: custom
     temperature: 0.5
 
 # Context Budget / 上下文预算

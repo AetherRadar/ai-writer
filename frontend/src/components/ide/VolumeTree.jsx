@@ -168,6 +168,7 @@ export default function VolumeTree({ projectId, onChapterSelect, selectedChapter
       }
       await mutate(`/drafts/${projectId}/chapters`);
       await mutate(`/drafts/${projectId}/summaries`);
+      await mutate(`/outline/${projectId}`);
     } catch (e) {
       window.alert(t('chapter.deleteFailed').replace('{message}', e?.message || t('common.unknown')));
     }
@@ -194,6 +195,7 @@ export default function VolumeTree({ projectId, onChapterSelect, selectedChapter
       });
       await mutate(`/drafts/${projectId}/chapters`);
       await mutate(`/drafts/${projectId}/summaries`);
+      await mutate(`/outline/${projectId}`);
     } catch (e) {
       window.alert(t('chapter.reorderFailed').replace('{message}', e?.response?.data?.detail || e?.message || t('common.unknown')));
     }

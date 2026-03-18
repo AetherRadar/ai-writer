@@ -39,7 +39,9 @@ function AutoRedirect() {
         const projects = res.data;
 
         if (projects && projects.length > 0) {
-          navigate(`/project/${projects[0].id}/session`, { replace: true });
+          const lastProjectId = localStorage.getItem('wenshape_last_project');
+          const targetProject = projects.find(p => String(p.id) === String(lastProjectId)) || projects[0];
+          navigate(`/project/${targetProject.id}/session`, { replace: true });
           return;
         }
 

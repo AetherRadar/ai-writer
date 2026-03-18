@@ -129,6 +129,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         self.max_iterations = int(session_cfg.get("max_iterations", 5))
         self.max_question_rounds = int(session_cfg.get("max_question_rounds", 2))
         self.max_research_rounds = int(session_cfg.get("max_research_rounds", 5))
+        self.stream_timeout = int(session_cfg.get("stream_timeout_seconds", 300))
 
     def set_language(self, language: str) -> None:
         normalized = normalize_language(language, default=self.language)
@@ -695,8 +696,20 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                     working_memory_payload=working_memory_payload,
                 )
             )
-            await self._stream_task
+            await asyncio.wait_for(asyncio.shield(self._stream_task), timeout=self.stream_timeout)
             self._stream_task = None
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Draft generation timed out after %ds for %s:%s",
+                self.stream_timeout, project_id, chapter,
+            )
+            if self._stream_task:
+                self._stream_task.cancel()
+                self._stream_task = None
+            return await self._handle_error(
+                f"Draft generation timed out after {self.stream_timeout}s. "
+                "Try reducing chapter goal complexity or check API response speed."
+            )
         except asyncio.CancelledError:
             return await self._handle_error("Stream cancelled")
         except Exception as exc:
@@ -805,6 +818,24 @@ class Orchestrator(ContextMixin, AnalysisMixin):
             logger.warning("Failed to import working_memory_service: %s", exc)
             return None
 
+        # --- 首章优化：第一章数据库为空，限制研究轮次避免超时 ---
+        # First chapter has no prior data, limit research rounds to prevent timeout
+        from app.utils.chapter_id import ChapterIDValidator
+        _parsed = ChapterIDValidator.parse(str(chapter))
+        effective_max_rounds = self.max_research_rounds
+        _is_first_chapter = (
+            _parsed is not None
+            and _parsed.get("chapter") == 1          # 章号必须是第1章
+            and _parsed.get("volume", 1) <= 1        # 卷号是第1卷或未指定
+            and not _parsed.get("type")              # 排除番外/幕间
+        )
+        if _is_first_chapter:
+            effective_max_rounds = min(effective_max_rounds, 1)
+            logger.info(
+                "First chapter detected (%s), limiting research to %d round(s)",
+                chapter, effective_max_rounds,
+            )
+
         research_trace: List[Dict[str, Any]] = []
         extra_queries: List[str] = []
         working_payload: Optional[Dict[str, Any]] = None
@@ -881,7 +912,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
         except Exception as exc:
             logger.warning("Initial research plan failed: %s", exc)
 
-        for round_index in range(1, self.max_research_rounds + 1):
+        for round_index in range(1, effective_max_rounds + 1):
             await self._emit_progress(
                 self._p(f"正在思考...（第{round_index}轮）", f"Preparing retrieval... (Round {round_index})"),
                 stage="prepare_retrieval",
@@ -996,7 +1027,7 @@ class Orchestrator(ContextMixin, AnalysisMixin):
                 )
                 break
 
-            if round_index >= self.max_research_rounds:
+            if round_index >= effective_max_rounds:
                 stop_reason = "max_rounds"
                 await self._emit_progress(
                     self._p("证据仍不足，已到最大轮次", "Evidence still insufficient; reached max rounds"),

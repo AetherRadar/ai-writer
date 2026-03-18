@@ -27,6 +27,7 @@ from app.storage.drafts import DraftStorage
 from app.storage.evidence_index import EvidenceIndexStorage
 from app.storage.bindings import ChapterBindingStorage
 from app.storage.memory_pack import MemoryPackStorage
+from app.storage.outline import OutlineStorage
 from app.storage.volumes import VolumeStorage
 
 
@@ -119,3 +120,16 @@ def get_volume_storage() -> VolumeStorage:
         VolumeStorage实例 / VolumeStorage instance
     """
     return VolumeStorage()
+
+
+@lru_cache(maxsize=1)
+def get_outline_storage() -> OutlineStorage:
+    """
+    获取或创建OutlineStorage的单例实例
+
+    Get or create singleton OutlineStorage instance.
+
+    Returns:
+        OutlineStorage实例 / OutlineStorage instance
+    """
+    return OutlineStorage()

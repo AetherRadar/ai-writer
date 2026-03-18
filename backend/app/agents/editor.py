@@ -22,6 +22,7 @@ from app.prompts import (
     editor_append_only_prompt,
     editor_patch_ops_prompt,
     editor_selection_replace_prompt,
+    de_ai_rewrite_prompt,
 )
 from app.utils.logger import get_logger
 from app.utils.llm_output import parse_json_payload
@@ -801,6 +802,52 @@ class EditorAgent(BaseAgent):
             config_agent="writer",
         )
 
+    async def rewrite_text(
+        self,
+        project_id: str,
+        original_text: str,
+    ) -> str:
+        """
+        极度口语化重构（De-AI Humanize Rewrite）
+        将选中的文本使用“混沌增益口语流”提示词进行重写，彻底去除 AI 带来的板正生硬感。
+        """
+        if not original_text or not str(original_text).strip():
+            return ""
+        
+        prompt = de_ai_rewrite_prompt(original_text=original_text, language=self.language)
+        messages = self.build_messages(
+            system_prompt=prompt.system,
+            user_prompt=prompt.user,
+            context_items=[]
+        )
+        
+        try:
+            # 使用较高的温度以增加混沌感和多样性
+            response = await self.call_llm(
+                messages, 
+                temperature=0.85,
+                return_meta=True
+            )
+            rewritten = str(response.get("content") or "").strip()
+            
+            # 过滤推理模型自带的思考标签及其内部的所有内容
+            rewritten = re.sub(r'<think>.*?</think>', '', rewritten, flags=re.DOTALL).strip()
+            
+            # 清理可能存在的解释性前缀
+            prefixes = ["好的", "没问题", "重写如下", "改写后", "以下是"]
+            for pLine in rewritten.split("\n")[:2]:
+                lowered = pLine.lower().strip()
+                if any(lowered.startswith(px) for px in prefixes):
+                    # 摘除第一行废话
+                    parts = rewritten.split("\n", 1)
+                    if len(parts) > 1:
+                        rewritten = parts[1].strip()
+            
+            return rewritten
+        except Exception as e:
+            logger.error("De-AI rewrite failed: %s", e)
+            raise ValueError(f"De-AI rewrite failed: {str(e)}")
+
     async def suggest_revision_selection(
         self,
         project_id: str,
@@ -964,54 +1011,56 @@ class EditorAgent(BaseAgent):
         working_memory = payload.get("working_memory")
         if working_memory:
             context_items.append("工作记忆：\n" + str(working_memory).strip())
-        evidence_pack = payload.get("evidence_pack") or {}
-        evidence_items = evidence_pack.get("items") or []
-        if evidence_items:
+        else:
+            evidence_pack = payload.get("evidence_pack") or {}
+            evidence_items = evidence_pack.get("items") or []
+            if evidence_items:
 
-            def _score(item: Dict[str, Any]) -> float:
-                try:
-                    return float(item.get("score") or 0)
-                except Exception:
-                    return 0.0
-            ordered = [item for item in evidence_items if isinstance(item, dict)]
-            ordered.sort(key=_score, reverse=True)
-            lines = []
-            for item in ordered:
-                text = str(item.get("text") or "").strip()
-                if not text:
-                    continue
-                item_type = str(item.get("type") or "evidence")
-                source = item.get("source") or {}
-                source_parts = [
-                    source.get("chapter"),
-                    source.get("draft"),
-                    source.get("path"),
-                    source.get("field"),
-                    source.get("fact_id"),
-                    source.get("card"),
-                    source.get("introduced_in"),
-                ]
-                source_label = " / ".join([str(part) for part in source_parts if part])
-                line = f"[{item_type}] {text}"
-                if source_label:
-                    line += f" ({source_label})"
-                lines.append(line)
-                if len(lines) >= 6:
-                    break
-            if lines:
-                context_items.append("证据摘录：\n" + "\n".join(lines))
-        unresolved_gaps = payload.get("unresolved_gaps") or []
-        if unresolved_gaps:
-            gap_lines = []
-            for gap in unresolved_gaps[:6]:
-                if isinstance(gap, dict):
-                    text = str(gap.get("text") or "").strip()
-                else:
-                    text = str(gap or "").strip()
-                if text:
-                    gap_lines.append(f"- {text}")
-            if gap_lines:
-                context_items.append("待确认缺口：\n" + "\n".join(gap_lines))
+                def _score(item: Dict[str, Any]) -> float:
+                    try:
+                        return float(item.get("score") or 0)
+                    except Exception:
+                        return 0.0
+                ordered = [item for item in evidence_items if isinstance(item, dict)]
+                ordered.sort(key=_score, reverse=True)
+                lines = []
+                for item in ordered:
+                    text = str(item.get("text") or "").strip()
+                    if not text:
+                        continue
+                    item_type = str(item.get("type") or "evidence")
+                    source = item.get("source") or {}
+                    source_parts = [
+                        source.get("chapter"),
+                        source.get("draft"),
+                        source.get("path"),
+                        source.get("field"),
+                        source.get("fact_id"),
+                        source.get("card"),
+                        source.get("introduced_in"),
+                    ]
+                    source_label = " / ".join([str(part) for part in source_parts if part])
+                    line = f"[{item_type}] {text}"
+                    if source_label:
+                        line += f" ({source_label})"
+                    lines.append(line)
+                    if len(lines) >= 6:
+                        break
+                if lines:
+                    context_items.append("证据摘录：\n" + "\n".join(lines))
+            
+            unresolved_gaps = payload.get("unresolved_gaps") or []
+            if unresolved_gaps:
+                gap_lines = []
+                for gap in unresolved_gaps[:6]:
+                    if isinstance(gap, dict):
+                        text = str(gap.get("text") or "").strip()
+                    else:
+                        text = str(gap or "").strip()
+                    if text:
+                        gap_lines.append(f"- {text}")
+                if gap_lines:
+                    context_items.append("待确认缺口：\n" + "\n".join(gap_lines))
         snapshot = None
         if isinstance(memory_pack, dict):
             snapshot = memory_pack.get("card_snapshot")

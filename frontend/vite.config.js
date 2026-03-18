@@ -28,6 +28,8 @@ export default defineConfig(({ mode }) => {
     server: {
       port: frontendPort,
       strictPort: false,
+      // 允许通过内网或 CF Tunnel 的公网域名访问
+      allowedHosts: ['.xurui.eu.cc', 'xurui.eu.cc', '.huangyun.eu.cc', 'huangyun.eu.cc', 'all'],
       proxy: {
         '/api': {
           target: backendBaseUrl,

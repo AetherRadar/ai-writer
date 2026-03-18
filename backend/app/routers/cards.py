@@ -291,3 +291,89 @@ async def extract_style_card(project_id: str, request: StyleExtractRequest):
     )
     style_text = await archivist.extract_style_profile(content)
     return {"style": style_text}
+
+
+# ---------------------------------------------------------------------------
+# AI 卡片生成接口 / AI Card Generation Endpoints
+# ---------------------------------------------------------------------------
+
+class CardGenerateRequest(BaseModel):
+    """单卡描述生成请求 / Request body for single card description generation."""
+
+    card_type: str = Field(..., description="Card type: 'character' or 'world'")
+    name: str = Field(..., description="Card name")
+    style_hint: Optional[str] = Field(None, description="Writing style hint")
+    note: Optional[str] = Field(None, description="Supplementary note")
+    language: Optional[str] = Field(None, description="Language override: zh/en")
+
+
+@router.post("/generate")
+async def generate_card_description(project_id: str, request: CardGenerateRequest):
+    """根据名字和约束 AI 生成单张卡片的描述。
+
+    Generate description for a single card using AI.
+    """
+    name = (request.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    card_type = request.card_type
+    if card_type not in ("character", "world"):
+        raise HTTPException(status_code=400, detail="card_type must be 'character' or 'world'")
+
+    language = await _resolve_project_language(project_id, request.language)
+    existing_chars = await card_storage.list_character_cards(project_id)
+
+    gateway = get_gateway()
+    archivist = ArchivistAgent(
+        gateway,
+        card_storage,
+        get_canon_storage(),
+        get_draft_storage(),
+        language=language,
+    )
+    description = await archivist.generate_card_description(
+        name=name,
+        card_type=card_type,
+        style_hint=request.style_hint or "",
+        note=request.note or "",
+        existing_characters=existing_chars or [],
+    )
+    return {"description": description}
+
+
+class OutlineExtractRequest(BaseModel):
+    """大纲批量提取请求 / Request body for outline card extraction."""
+
+    outline_text: str = Field(..., description="Outline text to extract cards from")
+    language: Optional[str] = Field(None, description="Language override: zh/en")
+
+
+@router.post("/extract-from-outline")
+async def extract_cards_from_outline(project_id: str, request: OutlineExtractRequest):
+    """从大纲文本中批量提取角色卡和世界观卡。
+
+    Extract character and world cards from outline text using AI.
+    Returns up to 20 cards, deduplicated and quality-filtered.
+    """
+    outline_text = (request.outline_text or "").strip()
+    if len(outline_text) < 30:
+        raise HTTPException(
+            status_code=400,
+            detail="outline_text is too short, please add more content before extracting"
+        )
+
+    language = await _resolve_project_language(project_id, request.language)
+    gateway = get_gateway()
+    archivist = ArchivistAgent(
+        gateway,
+        card_storage,
+        get_canon_storage(),
+        get_draft_storage(),
+        language=language,
+    )
+    cards = await archivist.extract_cards_from_outline(
+        outline_text=outline_text,
+        max_cards=20,
+    )
+    return {"cards": cards}
+

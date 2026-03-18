@@ -45,6 +45,12 @@ class OpenAIProvider(BaseLLMProvider):
             max_tokens=max_tokens or self.max_tokens
         )
         
+        if isinstance(response, str):
+            raise RuntimeError(f"OpenAI API returned text instead of JSON: {response}")
+            
+        if not hasattr(response, "choices") or not getattr(response, "choices"):
+            raise RuntimeError(f"OpenAI API returned invalid JSON object without choices: {response}")
+        
         return {
             "content": response.choices[0].message.content,
             "usage": {

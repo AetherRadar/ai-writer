@@ -17,6 +17,7 @@ import os
 import platform
 import socket
 import urllib.request
+import webbrowser
 from typing import Tuple
 from pathlib import Path
 
@@ -204,6 +205,12 @@ def main():
         print()
         print("Tip: Close the service windows to stop the services.")
         print()
+        
+        try:
+            print("Opening browser...")
+            webbrowser.open(f"http://localhost:{frontend_port}")
+        except Exception as e:
+            print(f"Failed to open browser: {e}")
 
         # Keep script running
         try:
